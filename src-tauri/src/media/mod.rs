@@ -27,7 +27,7 @@ pub struct MediaManager {
 
 impl MediaManager {
     pub fn new() -> Self {
-        let sample_tracks = vec![
+        let tracks = vec![
             AudioTrack {
                 id: "track-1".to_string(),
                 title: "Cyberpunk Ambient Stream (Dev Focus)".to_string(),
@@ -39,10 +39,19 @@ impl MediaManager {
             },
             AudioTrack {
                 id: "track-2".to_string(),
-                title: "Lofi Synthesizer Sessions".to_string(),
-                artist: "SynthWave AI".to_string(),
+                title: "Lo-Fi Beats to Code/Relax To".to_string(),
+                artist: "Kestrel Chillout".to_string(),
                 duration_seconds: 245,
-                source_url: "https://assets.kestrel.internal/audio/lofi_synths.mp3".to_string(),
+                source_url: "https://assets.kestrel.internal/audio/lofi_beats.mp3".to_string(),
+                is_downloaded: false,
+                download_progress: 0.0,
+            },
+            AudioTrack {
+                id: "track-3".to_string(),
+                title: "Deep Space Synthwave Drone".to_string(),
+                artist: "CyberVoid".to_string(),
+                duration_seconds: 410,
+                source_url: "https://assets.kestrel.internal/audio/space_drone.mp3".to_string(),
                 is_downloaded: false,
                 download_progress: 0.0,
             },
@@ -50,10 +59,10 @@ impl MediaManager {
 
         Self {
             state: Mutex::new(PlayerState {
-                current_track: sample_tracks.first().cloned(),
+                current_track: tracks.first().cloned(),
                 is_playing: false,
                 volume: 0.8,
-                playlist: sample_tracks,
+                playlist: tracks,
                 background_play_enabled: true,
             }),
         }
@@ -69,15 +78,32 @@ impl MediaManager {
         state.is_playing
     }
 
+    pub fn switch_track(&self, track_id: &str) -> PlayerState {
+        let mut state = self.state.lock().unwrap();
+        if let Some(target) = state.playlist.iter().find(|t| t.id == track_id).cloned() {
+            state.current_track = Some(target);
+            state.is_playing = true;
+        }
+        state.clone()
+    }
+
     pub fn trigger_download(&self, track_id: &str) -> Result<AudioTrack, String> {
         let mut state = self.state.lock().unwrap();
-        if let Some(track) = state.playlist.iter_mut().find(|t| t.id == track_id) {
-            track.is_downloaded = true;
-            track.download_progress = 100.0;
-            Ok(track.clone())
-        } else {
-            Err("Track not found".to_string())
+        let mut downloaded_track = None;
+        for track in state.playlist.iter_mut() {
+            if track.id == track_id {
+                track.is_downloaded = true;
+                track.download_progress = 100.0;
+                downloaded_track = Some(track.clone());
+            }
         }
+        if let Some(ref mut cur) = state.current_track {
+            if cur.id == track_id {
+                cur.is_downloaded = true;
+                cur.download_progress = 100.0;
+            }
+        }
+        downloaded_track.ok_or_else(|| "Track not found".to_string())
     }
 }
 
@@ -92,7 +118,11 @@ pub fn toggle_playback(state: tauri::State<'_, MediaManager>) -> bool {
 }
 
 #[tauri::command]
+pub fn switch_audio_track(track_id: String, state: tauri::State<'_, MediaManager>) -> PlayerState {
+    state.switch_track(&track_id)
+}
+
+#[tauri::command]
 pub fn download_audio_stream(track_id: String, state: tauri::State<'_, MediaManager>) -> Result<AudioTrack, String> {
     state.trigger_download(&track_id)
 }
-

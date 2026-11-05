@@ -2,10 +2,44 @@ use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State, WebviewBuilder, WebviewUrl, LogicalPosition, LogicalSize};
 
+fn normalize_target_url(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed == "kestrel://newtab" {
+        return "kestrel://newtab".to_string();
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") || trimmed.starts_with("kestrel://") {
+        trimmed.to_string()
+    } else if trimmed.contains('.') && !trimmed.contains(' ') {
+        format!("https://{}", trimmed)
+    } else {
+        format!("https://duckduckgo.com/?q={}", trimmed.replace(' ', "+"))
+    }
+}
+
 #[tauri::command]
-pub fn open_native_web_tab(app: AppHandle, tab_id: String, url: String) -> Result<(), String> {
+pub async fn open_native_web_tab(
+    app: AppHandle,
+    tab_id: String,
+    url: String,
+    x: Option<f64>,
+    y: Option<f64>,
+    width: Option<f64>,
+    height: Option<f64>,
+) -> Result<(), String> {
     let window = app.get_window("main").ok_or("Main window not found")?;
-    let parsed_url: tauri::Url = url.parse().map_err(|e| format!("{}", e))?;
+    let normalized = normalize_target_url(&url);
+
+    // If it's internal dashboard, hide all child webviews and exit cleanly
+    if normalized.starts_with("kestrel://") {
+        for (label, wv) in app.webviews() {
+            if label != "main" {
+                let _ = wv.hide();
+            }
+        }
+        return Ok(());
+    }
+
+    let parsed_url: tauri::Url = normalized.parse().map_err(|e| format!("Invalid URL {}: {}", normalized, e))?;
     
     // Hide other child webviews
     for (label, wv) in app.webviews() {
@@ -14,23 +48,70 @@ pub fn open_native_web_tab(app: AppHandle, tab_id: String, url: String) -> Resul
         }
     }
 
-    // Check if webview already exists, show and navigate
+    let pos_x = x.unwrap_or(0.0);
+    let pos_y = y.unwrap_or(74.0);
+    
+    let (target_w, target_h) = if let (Some(w), Some(h)) = (width, height) {
+        (w.max(200.0), h.max(200.0))
+    } else {
+        let win_size = window.inner_size().unwrap_or(tauri::PhysicalSize::new(1920, 1080));
+        let scale_factor = window.scale_factor().unwrap_or(1.0);
+        let logical_width = (win_size.width as f64) / scale_factor;
+        let logical_height = (win_size.height as f64) / scale_factor;
+        (logical_width.max(800.0), (logical_height - 74.0 - 48.0).max(400.0))
+    };
+
+    // Check if webview already exists, show and navigate immediately
     if let Some(existing) = app.get_webview(&tab_id) {
         let _ = existing.show();
-        existing.navigate(parsed_url).map_err(|e| e.to_string())?;
+        let _ = existing.set_position(LogicalPosition::new(pos_x, pos_y));
+        let _ = existing.set_size(LogicalSize::new(target_w, target_h));
+        let _ = existing.navigate(parsed_url);
         return Ok(());
     }
 
-    // Anchor below the 78px browser toolbar
-    let webview = WebviewBuilder::new(&tab_id, WebviewUrl::External(parsed_url))
-        .auto_resize();
+    // Anchor below the 74px browser toolbar and above the 48px player bar
+    let webview = WebviewBuilder::new(&tab_id, WebviewUrl::External(parsed_url));
         
     window.add_child(
         webview,
-        LogicalPosition::new(0., 78.),
-        LogicalSize::new(1280., 722.),
+        LogicalPosition::new(pos_x, pos_y),
+        LogicalSize::new(target_w, target_h),
     ).map_err(|e| e.to_string())?;
 
+    Ok(())
+}
+
+#[tauri::command]
+pub fn update_native_web_tab_bounds(app: AppHandle, tab_id: String, x: f64, y: f64, width: f64, height: f64) -> Result<(), String> {
+    if let Some(wv) = app.get_webview(&tab_id) {
+        let _ = wv.set_position(LogicalPosition::new(x, y));
+        let _ = wv.set_size(LogicalSize::new(width.max(100.0), height.max(100.0)));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn reload_native_web_tab(app: AppHandle, tab_id: String) -> Result<(), String> {
+    if let Some(wv) = app.get_webview(&tab_id) {
+        let _ = wv.eval("window.location.reload()");
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn navigate_native_web_tab_back(app: AppHandle, tab_id: String) -> Result<(), String> {
+    if let Some(wv) = app.get_webview(&tab_id) {
+        let _ = wv.eval("window.history.back()");
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn navigate_native_web_tab_forward(app: AppHandle, tab_id: String) -> Result<(), String> {
+    if let Some(wv) = app.get_webview(&tab_id) {
+        let _ = wv.eval("window.history.forward()");
+    }
     Ok(())
 }
 

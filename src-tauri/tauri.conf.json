@@ -2,11 +2,8 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Kestrel",
   "version": "0.1.0",
-  "identifier": "com.kestrel.browser",
+  "identifier": "com.kestrel.browserapp",
   "build": {
-    "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
   "app": {
