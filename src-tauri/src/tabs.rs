@@ -1,6 +1,56 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{AppHandle, Manager, State, WebviewBuilder, WebviewUrl, LogicalPosition, LogicalSize};
+
+#[tauri::command]
+pub fn open_native_web_tab(app: AppHandle, tab_id: String, url: String) -> Result<(), String> {
+    let window = app.get_window("main").ok_or("Main window not found")?;
+    let parsed_url: tauri::Url = url.parse().map_err(|e| format!("{}", e))?;
+    
+    // Hide other child webviews
+    for (label, wv) in app.webviews() {
+        if label != "main" && label != tab_id {
+            let _ = wv.hide();
+        }
+    }
+
+    // Check if webview already exists, show and navigate
+    if let Some(existing) = app.get_webview(&tab_id) {
+        let _ = existing.show();
+        existing.navigate(parsed_url).map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    // Anchor below the 78px browser toolbar
+    let webview = WebviewBuilder::new(&tab_id, WebviewUrl::External(parsed_url))
+        .auto_resize();
+        
+    window.add_child(
+        webview,
+        LogicalPosition::new(0., 78.),
+        LogicalSize::new(1280., 722.),
+    ).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn hide_native_web_tabs(app: AppHandle) -> Result<(), String> {
+    for (label, wv) in app.webviews() {
+        if label != "main" {
+            let _ = wv.hide();
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn close_native_web_tab(app: AppHandle, tab_id: String) -> Result<(), String> {
+    if let Some(wv) = app.get_webview(&tab_id) {
+        let _ = wv.close();
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tab {

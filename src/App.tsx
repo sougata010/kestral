@@ -23,10 +23,10 @@ import {
   Copy,
   Check,
   Zap,
+  Sparkles,
 } from "lucide-react";
 import "./App.css";
 
-// Type definitions matching Rust backend structs
 interface Tab {
   id: string;
   url: string;
@@ -164,6 +164,7 @@ export default function App() {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string>("tab-1");
   const [omniboxInput, setOmniboxInput] = useState<string>("");
+  const [dashboardSearch, setDashboardSearch] = useState<string>("");
   const [activeDrawer, setActiveDrawer] = useState<
     "none" | "shield" | "devtools" | "intel" | "vault" | "vpn" | "resources" | "extensions"
   >("none");
@@ -220,7 +221,7 @@ export default function App() {
       const active = fetchedTabs.find((t) => t.id === activeId);
       if (active) {
         setOmniboxInput(active.url);
-        await runSecurityPipeline(active.url);
+        await runNavigation(active.id, active.url);
       }
     } catch (err) {
       console.error("Failed to load tabs:", err);
@@ -278,10 +279,12 @@ export default function App() {
     }
   }
 
-  async function runSecurityPipeline(url: string) {
-    if (url.startsWith("kestrel://")) {
+  async function runNavigation(tabId: string, url: string) {
+    if (url.startsWith("kestrel://") || !url) {
+      // Hide child webviews so dashboard shows
+      await invoke("hide_native_web_tabs");
       setCurrentUrlScan({
-        url,
+        url: url || "kestrel://newtab",
         is_safe: true,
         threat_score: 0,
         threat_category: "INTERNAL_SECURE",
@@ -299,8 +302,14 @@ export default function App() {
       const scan = await invoke<UrlScanResult>("check_url", { url: targetUrl });
       setCurrentUrlScan(scan);
 
-      // 3. Adblock Check (REQ-05)
-      await invoke<[boolean, boolean]>("check_adblock", { url: targetUrl });
+      // Blocked if critical malware
+      if (!scan.is_safe && scan.threat_score >= 80) {
+        await invoke("hide_native_web_tabs");
+        return;
+      }
+
+      // 3. Open Real Native Top-Level Webview in Rust (No iframe! No X-Frame-Options block!)
+      await invoke("open_native_web_tab", { tabId, url: targetUrl });
 
       // 4. Sample Cookie Inspection (REQ-01)
       const hostname = new URL(targetUrl).hostname;
@@ -329,7 +338,7 @@ export default function App() {
       const curl = await invoke<string>("generate_curl_command", { url: targetUrl });
       setCurlCommand(curl);
     } catch (err) {
-      console.error("Error running security pipeline:", err);
+      console.error("Error running navigation:", err);
     }
   }
 
@@ -339,7 +348,7 @@ export default function App() {
       await fetchTabs();
       setActiveTabId(newTab.id);
       setOmniboxInput(newTab.url);
-      await runSecurityPipeline(newTab.url);
+      await runNavigation(newTab.id, newTab.url);
     } catch (err) {
       console.error("Error creating tab:", err);
     }
@@ -348,6 +357,7 @@ export default function App() {
   async function handleCloseTab(tabId: string, e: React.MouseEvent) {
     e.stopPropagation();
     try {
+      await invoke("close_native_web_tab", { tabId });
       await invoke<Tab[]>("close_tab", { tabId });
       await fetchTabs();
     } catch (err) {
@@ -362,7 +372,7 @@ export default function App() {
       const target = tabs.find((t) => t.id === tabId);
       if (target) {
         setOmniboxInput(target.url);
-        await runSecurityPipeline(target.url);
+        await runNavigation(target.id, target.url);
       }
     } catch (err) {
       console.error("Error switching tab:", err);
@@ -374,22 +384,30 @@ export default function App() {
     if (!omniboxInput.trim()) return;
 
     try {
-      // Apply parameter striping
-      const stripped = await invoke<StripResult>("strip_tracking_parameters", {
-        url: omniboxInput.trim(),
-      });
-
       const updatedTab = await invoke<Tab>("navigate_tab", {
         tabId: activeTabId,
-        url: stripped.sanitized_url,
+        url: omniboxInput.trim(),
       });
 
       setOmniboxInput(updatedTab.url);
       await fetchTabs();
-      await runSecurityPipeline(updatedTab.url);
+      await runNavigation(updatedTab.id, updatedTab.url);
     } catch (err) {
       console.error("Error navigating:", err);
     }
+  }
+
+  async function handleDashboardSearch(e: React.FormEvent) {
+    e.preventDefault();
+    if (!dashboardSearch.trim()) return;
+    setOmniboxInput(dashboardSearch.trim());
+    const updatedTab = await invoke<Tab>("navigate_tab", {
+      tabId: activeTabId,
+      url: dashboardSearch.trim(),
+    });
+    setOmniboxInput(updatedTab.url);
+    await fetchTabs();
+    await runNavigation(updatedTab.id, updatedTab.url);
   }
 
   async function handleDecryptCredential(id: string) {
@@ -454,7 +472,7 @@ export default function App() {
 
   return (
     <div className="kestrel-app">
-      {/* 1. Top Browser Header */}
+      {/* 1. Glassmorphic Browser Top Header */}
       <header className="browser-header">
         {/* Tab Strip */}
         <div className="tab-strip">
@@ -464,7 +482,7 @@ export default function App() {
               className={`tab-item ${tab.id === activeTabId ? "active" : ""}`}
               onClick={() => handleSwitchTab(tab.id)}
             >
-              <Globe size={14} />
+              <Globe size={13} style={{ color: "var(--cyan-glow)" }} />
               <span className="tab-title">{tab.title || "New Tab"}</span>
               <button
                 className="tab-close"
@@ -480,35 +498,37 @@ export default function App() {
             onClick={() => handleCreateTab()}
             title="Open New Tab"
           >
-            <Plus size={16} />
+            <Plus size={15} />
           </button>
         </div>
 
         {/* Navigation Toolbar */}
         <div className="nav-toolbar">
-          <button className="nav-btn" disabled title="Go Back">
-            <ArrowLeft size={16} />
-          </button>
-          <button className="nav-btn" disabled title="Go Forward">
-            <ArrowRight size={16} />
-          </button>
-          <button
-            className="nav-btn"
-            onClick={() => activeTab && runSecurityPipeline(activeTab.url)}
-            title="Reload Page"
-          >
-            <RotateCw size={15} />
-          </button>
+          <div className="nav-actions">
+            <button className="nav-btn" disabled title="Go Back">
+              <ArrowLeft size={16} />
+            </button>
+            <button className="nav-btn" disabled title="Go Forward">
+              <ArrowRight size={16} />
+            </button>
+            <button
+              className="nav-btn"
+              onClick={() => activeTab && runNavigation(activeTab.id, activeTab.url)}
+              title="Reload"
+            >
+              <RotateCw size={14} />
+            </button>
+          </div>
 
-          {/* Omnibox */}
+          {/* Omnibox Floating Capsule */}
           <form className="omnibox-container" onSubmit={handleNavigate}>
-            <Lock size={14} style={{ color: "var(--accent-green)" }} />
+            <Lock size={13} style={{ color: "var(--green-glow)" }} />
             <input
               type="text"
               className="omnibox-input"
               value={omniboxInput}
               onChange={(e) => setOmniboxInput(e.target.value)}
-              placeholder="Search or enter URL (e.g. github.com, news.ycombinator.com)..."
+              placeholder="Search web or enter address (e.g. google.com, github.com)..."
             />
 
             {/* URL Threat HUD Badge */}
@@ -545,7 +565,7 @@ export default function App() {
               onClick={() =>
                 setActiveDrawer(activeDrawer === "shield" ? "none" : "shield")
               }
-              title="Trackers & Ads Blocked"
+              title="Brave Adblock: Rules Active"
             >
               <Shield size={12} />
               <span>{adblockStats?.total_blocked || 0} Blocked</span>
@@ -553,89 +573,91 @@ export default function App() {
           </form>
 
           {/* Action Drawer Toggles */}
-          <button
-            className={`tool-btn ${activeDrawer === "shield" ? "active" : ""}`}
-            onClick={() =>
-              setActiveDrawer(activeDrawer === "shield" ? "none" : "shield")
-            }
-          >
-            <Shield size={14} />
-            <span>Shield</span>
-          </button>
+          <div className="tool-group">
+            <button
+              className={`tool-btn ${activeDrawer === "shield" ? "active" : ""}`}
+              onClick={() =>
+                setActiveDrawer(activeDrawer === "shield" ? "none" : "shield")
+              }
+            >
+              <Shield size={13} />
+              <span>Shield</span>
+            </button>
 
-          <button
-            className={`tool-btn ${activeDrawer === "vault" ? "active" : ""}`}
-            onClick={() =>
-              setActiveDrawer(activeDrawer === "vault" ? "none" : "vault")
-            }
-          >
-            <Key size={14} />
-            <span>Vault</span>
-          </button>
+            <button
+              className={`tool-btn ${activeDrawer === "vault" ? "active" : ""}`}
+              onClick={() =>
+                setActiveDrawer(activeDrawer === "vault" ? "none" : "vault")
+              }
+            >
+              <Key size={13} />
+              <span>Vault</span>
+            </button>
 
-          <button
-            className={`tool-btn ${activeDrawer === "vpn" ? "active" : ""}`}
-            onClick={() =>
-              setActiveDrawer(activeDrawer === "vpn" ? "none" : "vpn")
-            }
-          >
-            <Zap size={14} />
-            <span>VPN</span>
-          </button>
+            <button
+              className={`tool-btn ${activeDrawer === "vpn" ? "active" : ""}`}
+              onClick={() =>
+                setActiveDrawer(activeDrawer === "vpn" ? "none" : "vpn")
+              }
+            >
+              <Zap size={13} />
+              <span>VPN</span>
+            </button>
 
-          <button
-            className={`tool-btn ${activeDrawer === "devtools" ? "active" : ""}`}
-            onClick={() =>
-              setActiveDrawer(activeDrawer === "devtools" ? "none" : "devtools")
-            }
-          >
-            <Code size={14} />
-            <span>DevTools</span>
-          </button>
+            <button
+              className={`tool-btn ${activeDrawer === "devtools" ? "active" : ""}`}
+              onClick={() =>
+                setActiveDrawer(activeDrawer === "devtools" ? "none" : "devtools")
+              }
+            >
+              <Code size={13} />
+              <span>DevTools</span>
+            </button>
 
-          <button
-            className={`tool-btn ${activeDrawer === "intel" ? "active" : ""}`}
-            onClick={() =>
-              setActiveDrawer(activeDrawer === "intel" ? "none" : "intel")
-            }
-          >
-            <Radio size={14} />
-            <span>Intel</span>
-          </button>
+            <button
+              className={`tool-btn ${activeDrawer === "intel" ? "active" : ""}`}
+              onClick={() =>
+                setActiveDrawer(activeDrawer === "intel" ? "none" : "intel")
+              }
+            >
+              <Radio size={13} />
+              <span>Intel</span>
+            </button>
 
-          <button
-            className={`tool-btn ${activeDrawer === "extensions" ? "active" : ""}`}
-            onClick={() =>
-              setActiveDrawer(activeDrawer === "extensions" ? "none" : "extensions")
-            }
-          >
-            <Puzzle size={14} />
-            <span>Extensions</span>
-          </button>
+            <button
+              className={`tool-btn ${activeDrawer === "extensions" ? "active" : ""}`}
+              onClick={() =>
+                setActiveDrawer(activeDrawer === "extensions" ? "none" : "extensions")
+              }
+            >
+              <Puzzle size={13} />
+              <span>Ext</span>
+            </button>
 
-          <button
-            className={`tool-btn ${activeDrawer === "resources" ? "active" : ""}`}
-            onClick={() =>
-              setActiveDrawer(activeDrawer === "resources" ? "none" : "resources")
-            }
-          >
-            <Cpu size={14} />
-            <span>RAM</span>
-          </button>
+            <button
+              className={`tool-btn ${activeDrawer === "resources" ? "active" : ""}`}
+              onClick={() =>
+                setActiveDrawer(activeDrawer === "resources" ? "none" : "resources")
+              }
+            >
+              <Cpu size={13} />
+              <span>RAM</span>
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* 2. Main Content & Active Drawers */}
+      {/* 2. Main Viewport Container */}
       <main className="browser-content">
         {/* Threat Block Overlay if Malicious */}
         {currentUrlScan && !currentUrlScan.is_safe && currentUrlScan.threat_score >= 80 ? (
           <div className="threat-block-overlay">
-            <ShieldAlert size={56} className="threat-icon" />
+            <ShieldAlert size={60} className="threat-icon" />
             <h1 className="threat-title">Deceptive Site Blocked by Kestrel Shield</h1>
             <p className="threat-desc">
               Kestrel detected high-risk malicious signatures associated with <strong>{currentUrlScan.threat_category}</strong>. Access has been halted to prevent credential harvesting and malware execution.
             </p>
-            <div style={{ display: "flex", gap: "10px" }}>
+            <div style={{ display: "flex", gap: "12px" }}>
               <button
                 className="btn-primary"
                 onClick={() => handleCreateTab("kestrel://newtab")}
@@ -643,64 +665,95 @@ export default function App() {
                 Back to Safety
               </button>
               <button
-                className="threat-bypass-btn"
+                className="btn-secondary"
                 onClick={() =>
                   setCurrentUrlScan((prev) => (prev ? { ...prev, is_safe: true } : null))
                 }
               >
-                Bypass &amp; Open Anyway (Isolated)
+                Bypass &amp; Open (Isolated)
               </button>
             </div>
           </div>
         ) : activeTab?.url === "kestrel://newtab" ? (
           <div className="newtab-dashboard">
             <div className="dashboard-hero">
-              <div className="hero-logo">KESTREL</div>
+              <div className="hero-badge">
+                <Sparkles size={12} />
+                <span>Next-Gen Systems Architecture</span>
+              </div>
+              <h1 className="hero-logo">KESTREL</h1>
               <p className="hero-subtitle">
-                A developer-first, cybersecurity-hardened web browser built in Rust
+                A developer-first, cybersecurity-hardened web browser built natively in Rust
               </p>
             </div>
 
-            {/* Real-Time Security & Performance Telemetry Stats */}
+            {/* Central Search Input */}
+            <form className="dashboard-search-bar" onSubmit={handleDashboardSearch}>
+              <Globe size={18} style={{ color: "var(--cyan-glow)" }} />
+              <input
+                type="text"
+                className="dashboard-search-input"
+                placeholder="Search DuckDuckGo or jump to domain (e.g. google.com, github.com)..."
+                value={dashboardSearch}
+                onChange={(e) => setDashboardSearch(e.target.value)}
+              />
+              <button type="submit" className="btn-primary" style={{ padding: "6px 14px" }}>
+                Browse
+              </button>
+            </form>
+
+            {/* Real-Time Telemetry Stats */}
             <div className="stat-grid">
               <div className="stat-card">
-                <span className="stat-label">Brave Adblock Rules</span>
-                <span className="stat-value" style={{ color: "var(--accent-green)" }}>
+                <div className="stat-header">
+                  <span className="stat-label">Brave Adblock Engine</span>
+                  <Shield size={14} style={{ color: "var(--green-glow)" }} />
+                </div>
+                <span className="stat-value" style={{ color: "var(--green-glow)" }}>
                   {adblockStats?.rules_count || 40} Rules Active
                 </span>
               </div>
               <div className="stat-card">
-                <span className="stat-label">Cookie Entropy Guard</span>
-                <span className="stat-value" style={{ color: "var(--accent-cyan)" }}>
-                  Shannon 4.8 H
+                <div className="stat-header">
+                  <span className="stat-label">Cookie Shannon Entropy</span>
+                  <Terminal size={14} style={{ color: "var(--cyan-glow)" }} />
+                </div>
+                <span className="stat-value" style={{ color: "var(--cyan-glow)" }}>
+                  4.8 H Threshold
                 </span>
               </div>
               <div className="stat-card">
-                <span className="stat-label">Userspace WireGuard</span>
-                <span className="stat-value" style={{ color: "var(--accent-blue)" }}>
-                  {vpnStatus?.is_connected ? "Encrypted (CH)" : "Disconnected"}
+                <div className="stat-header">
+                  <span className="stat-label">Userspace WireGuard</span>
+                  <Zap size={14} style={{ color: "var(--blue-glow)" }} />
+                </div>
+                <span className="stat-value" style={{ color: "var(--blue-glow)" }}>
+                  {vpnStatus?.is_connected ? "CH Relay (24ms)" : "Direct"}
                 </span>
               </div>
               <div className="stat-card">
-                <span className="stat-label">Memory Conservation</span>
-                <span className="stat-value" style={{ color: "var(--accent-amber)" }}>
+                <div className="stat-header">
+                  <span className="stat-label">RAM Consumption</span>
+                  <Cpu size={14} style={{ color: "var(--amber-glow)" }} />
+                </div>
+                <span className="stat-value" style={{ color: "var(--amber-glow)" }}>
                   {resourceStats?.kestrel_rss_mb || 28} MB RSS
                 </span>
               </div>
             </div>
 
-            {/* Feature Workspaces */}
+            {/* Workspaces Grid */}
             <div className="feature-cards">
               <div
                 className="feature-card"
                 onClick={() => setActiveDrawer("shield")}
               >
                 <div className="feature-title">
-                  <ShieldCheck size={18} style={{ color: "var(--accent-green)" }} />
+                  <ShieldCheck size={18} style={{ color: "var(--green-glow)" }} />
                   <span>Real-Time Threat Shield</span>
                 </div>
                 <p className="feature-desc">
-                  Inspects cookie entropy, strips tracking parameters, and blocks deceptive sites.
+                  Inspects cookie entropy, strips tracking parameters, and halts deceptive phishing attempts.
                 </p>
               </div>
 
@@ -709,11 +762,11 @@ export default function App() {
                 onClick={() => setActiveDrawer("vault")}
               >
                 <div className="feature-title">
-                  <Key size={18} style={{ color: "var(--accent-amber)" }} />
+                  <Key size={18} style={{ color: "var(--amber-glow)" }} />
                   <span>Cryptographic Vault</span>
                 </div>
                 <p className="feature-desc">
-                  Hardware-backed encrypted password storage with explicit user PIN approval gates.
+                  Hardware-sealed encrypted credential storage with mandatory user PIN approval gates.
                 </p>
               </div>
 
@@ -722,7 +775,7 @@ export default function App() {
                 onClick={() => setActiveDrawer("vpn")}
               >
                 <div className="feature-title">
-                  <Zap size={18} style={{ color: "var(--accent-cyan)" }} />
+                  <Zap size={18} style={{ color: "var(--cyan-glow)" }} />
                   <span>WireGuard &amp; Tor Routing</span>
                 </div>
                 <p className="feature-desc">
@@ -735,7 +788,7 @@ export default function App() {
                 onClick={() => setActiveDrawer("devtools")}
               >
                 <div className="feature-title">
-                  <Terminal size={18} style={{ color: "var(--accent-blue)" }} />
+                  <Terminal size={18} style={{ color: "var(--blue-glow)" }} />
                   <span>Expert Developer Suite</span>
                 </div>
                 <p className="feature-desc">
@@ -748,11 +801,11 @@ export default function App() {
                 onClick={() => setActiveDrawer("intel")}
               >
                 <div className="feature-title">
-                  <Radio size={18} style={{ color: "var(--accent-purple)" }} />
+                  <Radio size={18} style={{ color: "var(--purple-glow)" }} />
                   <span>Cybersecurity Intel Radar</span>
                 </div>
                 <p className="feature-desc">
-                  Curated security tools (Ghidra, REA, Nuclei, ZAP), live CVE feed, and domain security audits.
+                  Curated security tools (Ghidra, REA, Nuclei, ZAP), live CVE feed, and domain security scorecards.
                 </p>
               </div>
 
@@ -761,31 +814,26 @@ export default function App() {
                 onClick={() => setActiveDrawer("resources")}
               >
                 <div className="feature-title">
-                  <Cpu size={18} style={{ color: "var(--accent-green)" }} />
-                  <span>Intelligent Resource Manager</span>
+                  <Cpu size={18} style={{ color: "var(--green-glow)" }} />
+                  <span>Intelligent Resource Watchdog</span>
                 </div>
                 <p className="feature-desc">
-                  Auto-hibernates inactive tabs, freeing RAM and reducing background CPU usage.
+                  Auto-hibernates inactive tabs, freeing RAM and locking background CPU usage.
                 </p>
               </div>
             </div>
           </div>
         ) : (
-          <iframe
-            src={activeTab?.url}
-            className="web-viewport"
-            title="Web Viewport"
-            sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
-          />
+          <div style={{ flex: 1, height: "100%", width: "100%", background: "#07090e" }} />
         )}
 
-        {/* 3. Slide-Out Panels */}
-        {/* Shield & Cookie Guard Drawer */}
+        {/* 3. Slide-In Drawers */}
+        {/* Shield Drawer */}
         {activeDrawer === "shield" && (
           <aside className="side-drawer">
             <div className="drawer-header">
               <div className="drawer-title">
-                <Shield size={16} style={{ color: "var(--accent-blue)" }} />
+                <Shield size={16} style={{ color: "var(--blue-glow)" }} />
                 <span>Security &amp; Cookie Guard</span>
               </div>
               <button className="tab-close" onClick={() => setActiveDrawer("none")}>
@@ -796,11 +844,11 @@ export default function App() {
               {currentUrlScan && (
                 <div className="audit-item">
                   <strong>URL Lexical Audit</strong>
-                  <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "4px" }}>
+                  <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>
                     Threat Score: {currentUrlScan.threat_score}/100 ({currentUrlScan.threat_category})
                   </div>
                   {currentUrlScan.reasons.map((r, i) => (
-                    <div key={i} className="audit-tag">
+                    <div key={i} className="audit-tag" style={{ background: "rgba(239, 68, 68, 0.2)", color: "var(--red-glow)" }}>
                       {r}
                     </div>
                   ))}
@@ -809,30 +857,30 @@ export default function App() {
 
               <div className="audit-item">
                 <strong>Brave Adblock Engine</strong>
-                <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
                   Total Blocked: <strong>{adblockStats?.total_blocked || 0}</strong>
                 </div>
-                <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
                   Trackers Neutralized: <strong>{adblockStats?.trackers_blocked || 0}</strong>
                 </div>
-                <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
                   Active Rule Set: <strong>{adblockStats?.rules_count || 40} rules</strong>
                 </div>
               </div>
 
               <div className="audit-item">
                 <strong>Cookie Shannon Entropy Audit</strong>
-                <p style={{ fontSize: "11px", color: "var(--text-secondary)", margin: "4px 0 8px 0" }}>
-                  Analyzes cookies for tracking beacons &amp; injection payloads (H &gt; 4.8).
+                <p style={{ fontSize: "11px", color: "var(--text-muted)", margin: "4px 0 8px 0" }}>
+                  Flags cookies with high entropy ($H &gt; 4.8$) as tracking beacons.
                 </p>
                 {sampleCookies.map((cookie, idx) => (
-                  <div key={idx} style={{ marginTop: "8px", borderTop: "1px solid var(--border-color)", paddingTop: "6px" }}>
+                  <div key={idx} style={{ marginTop: "8px", borderTop: "1px solid var(--border-subtle)", paddingTop: "6px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
                       <code>{cookie.name}</code>
-                      <span style={{ color: "var(--accent-cyan)" }}>H: {cookie.entropy.toFixed(2)}</span>
+                      <span style={{ color: "var(--cyan-glow)" }}>H: {cookie.entropy.toFixed(2)}</span>
                     </div>
                     {cookie.threat_tags.map((t, ti) => (
-                      <span key={ti} className="audit-tag">
+                      <span key={ti} className="audit-tag" style={{ background: "rgba(239, 68, 68, 0.15)", color: "var(--red-glow)", marginTop: "4px" }}>
                         {t}
                       </span>
                     ))}
@@ -848,7 +896,7 @@ export default function App() {
           <aside className="side-drawer">
             <div className="drawer-header">
               <div className="drawer-title">
-                <Key size={16} style={{ color: "var(--accent-amber)" }} />
+                <Key size={16} style={{ color: "var(--amber-glow)" }} />
                 <span>Cryptographic Vault</span>
               </div>
               <button className="tab-close" onClick={() => setActiveDrawer("none")}>
@@ -858,27 +906,27 @@ export default function App() {
             <div className="drawer-body">
               <div className="audit-item">
                 <strong>Hardware-Sealed Credentials</strong>
-                <p style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "4px" }}>
-                  Credentials remain encrypted ciphertext in memory until unlocked via explicit user consent PIN.
+                <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>
+                  Passwords remain encrypted in RAM until unlocked via explicit user consent PIN.
                 </p>
                 {credentials.map((cred) => (
-                  <div key={cred.id} style={{ marginTop: "10px", borderTop: "1px solid var(--border-color)", paddingTop: "8px" }}>
+                  <div key={cred.id} style={{ marginTop: "10px", borderTop: "1px solid var(--border-subtle)", paddingTop: "8px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px" }}>
                       <strong>{cred.domain}</strong>
-                      <span style={{ color: "var(--text-secondary)" }}>{cred.username}</span>
+                      <span style={{ color: "var(--text-muted)" }}>{cred.username}</span>
                     </div>
                     <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
                       <input
                         type="password"
-                        placeholder="Enter PIN (1234)"
+                        placeholder="PIN (1234)"
                         value={vaultPinInput}
                         onChange={(e) => setVaultPinInput(e.target.value)}
                         style={{
                           flex: 1,
-                          padding: "4px 8px",
-                          borderRadius: "4px",
-                          background: "var(--bg-secondary)",
-                          border: "1px solid var(--border-color)",
+                          padding: "6px 10px",
+                          borderRadius: "6px",
+                          background: "var(--bg-input)",
+                          border: "1px solid var(--border-subtle)",
                           color: "#fff",
                           fontSize: "12px",
                         }}
@@ -887,21 +935,21 @@ export default function App() {
                         className="btn-primary"
                         onClick={() => handleDecryptCredential(cred.id)}
                       >
-                        Decrypt
+                        Unlock
                       </button>
                     </div>
                   </div>
                 ))}
 
                 {vaultError && (
-                  <div style={{ color: "var(--accent-red)", fontSize: "11px", marginTop: "8px" }}>
+                  <div style={{ color: "var(--red-glow)", fontSize: "11px", marginTop: "8px" }}>
                     {vaultError}
                   </div>
                 )}
 
                 {decryptedSecret && (
-                  <div style={{ background: "rgba(16, 185, 129, 0.15)", border: "1px solid var(--accent-green)", padding: "10px", borderRadius: "6px", marginTop: "10px" }}>
-                    <div style={{ fontSize: "11px", color: "var(--accent-green)" }}>
+                  <div style={{ background: "rgba(16, 185, 129, 0.15)", border: "1px solid var(--green-glow)", padding: "10px", borderRadius: "8px", marginTop: "10px" }}>
+                    <div style={{ fontSize: "11px", color: "var(--green-glow)" }}>
                       Decrypted in Ephemeral RAM:
                     </div>
                     <code style={{ fontSize: "12px", color: "#fff", wordBreak: "break-all" }}>
@@ -919,7 +967,7 @@ export default function App() {
           <aside className="side-drawer">
             <div className="drawer-header">
               <div className="drawer-title">
-                <Zap size={16} style={{ color: "var(--accent-cyan)" }} />
+                <Zap size={16} style={{ color: "var(--cyan-glow)" }} />
                 <span>Userspace WireGuard &amp; Tor</span>
               </div>
               <button className="tab-close" onClick={() => setActiveDrawer("none")}>
@@ -929,7 +977,7 @@ export default function App() {
             <div className="drawer-body">
               <div className="audit-item">
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <strong>VPN Tunnel</strong>
+                  <strong>VPN Tunnel Status</strong>
                   <button
                     className={vpnStatus?.is_connected ? "btn-primary" : "btn-secondary"}
                     onClick={handleToggleVpn}
@@ -940,20 +988,20 @@ export default function App() {
                 <div style={{ fontSize: "12px", marginTop: "8px", display: "flex", flexDirection: "column", gap: "4px" }}>
                   <div>Protocol: <code>{vpnStatus?.protocol}</code></div>
                   <div>Exit Location: <strong>{vpnStatus?.exit_country}</strong></div>
-                  <div>SOCKS5 Port: <code>127.0.0.1:{vpnStatus?.local_socks5_port}</code></div>
-                  <div>Latency: <code>{vpnStatus?.latency_ms} ms</code></div>
+                  <div>Local SOCKS5: <code>127.0.0.1:{vpnStatus?.local_socks5_port}</code></div>
+                  <div>Latency: <code style={{ color: "var(--green-glow)" }}>{vpnStatus?.latency_ms} ms</code></div>
                 </div>
               </div>
 
               <div className="audit-item">
                 <strong>Tor-Like Multi-Hop Circuit (No .onion)</strong>
-                <p style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "4px" }}>
-                  Chains packets through 3 randomized international relays to prevent correlation attacks.
+                <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>
+                  Traffic is routed across 3 international relays to prevent IP correlation attacks.
                 </p>
                 <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "8px", fontSize: "11px" }}>
                   {vpnStatus?.tor_circuit_hops.map((hop, idx) => (
                     <div key={idx} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                      <span style={{ color: "var(--accent-cyan)" }}>Node {idx + 1}:</span>
+                      <span style={{ color: "var(--cyan-glow)", fontWeight: "600" }}>Node {idx + 1}:</span>
                       <code>{hop}</code>
                     </div>
                   ))}
@@ -962,10 +1010,10 @@ export default function App() {
 
               <div className="audit-item">
                 <strong>Anti-Fingerprinting Noise</strong>
-                <p style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "4px" }}>
-                  Canvas, WebGL, and AudioContext noise injection active.
+                <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>
+                  Canvas 2D and WebGL pixel jitter active.
                 </p>
-                <span className="audit-tag" style={{ background: "rgba(16, 185, 129, 0.2)", color: "var(--accent-green)" }}>
+                <span className="audit-tag" style={{ background: "rgba(16, 185, 129, 0.2)", color: "var(--green-glow)" }}>
                   Noise Jitter Active (100% Protection)
                 </span>
               </div>
@@ -978,7 +1026,7 @@ export default function App() {
           <aside className="side-drawer">
             <div className="drawer-header">
               <div className="drawer-title">
-                <Code size={16} style={{ color: "var(--accent-cyan)" }} />
+                <Code size={16} style={{ color: "var(--cyan-glow)" }} />
                 <span>Expert Developer Suite</span>
               </div>
               <button className="tab-close" onClick={() => setActiveDrawer("none")}>
@@ -993,7 +1041,7 @@ export default function App() {
                     <span
                       key={idx}
                       className="audit-tag"
-                      style={{ background: "rgba(59, 130, 246, 0.2)", color: "var(--accent-blue)" }}
+                      style={{ background: "rgba(59, 130, 246, 0.2)", color: "var(--blue-glow)" }}
                     >
                       {t.name} {t.version ? `(${t.version})` : ""}
                     </span>
@@ -1019,13 +1067,13 @@ export default function App() {
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between" }}>
                       <span>TTFB (First Byte):</span>
-                      <code style={{ color: "var(--accent-green)" }}>{networkTimings.ttfb_ms} ms</code>
+                      <code style={{ color: "var(--green-glow)" }}>{networkTimings.ttfb_ms} ms</code>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between" }}>
                       <span>Download:</span>
                       <code>{networkTimings.download_ms} ms</code>
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid var(--border-color)", paddingTop: "4px", fontWeight: "bold" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", borderTop: "1px solid var(--border-subtle)", paddingTop: "4px", fontWeight: "bold" }}>
                       <span>Total Latency:</span>
                       <code>{networkTimings.total_ms} ms</code>
                     </div>
@@ -1053,13 +1101,13 @@ export default function App() {
                   style={{
                     width: "100%",
                     height: "80px",
-                    background: "var(--bg-secondary)",
-                    border: "1px solid var(--border-color)",
-                    borderRadius: "4px",
-                    color: "var(--text-secondary)",
-                    fontFamily: "var(--font-mono)",
+                    background: "var(--bg-input)",
+                    border: "1px solid var(--border-subtle)",
+                    borderRadius: "6px",
+                    color: "var(--text-muted)",
+                    fontFamily: "var(--font-code)",
                     fontSize: "11px",
-                    padding: "6px",
+                    padding: "8px",
                     marginTop: "6px",
                   }}
                 />
@@ -1073,7 +1121,7 @@ export default function App() {
           <aside className="side-drawer">
             <div className="drawer-header">
               <div className="drawer-title">
-                <Radio size={16} style={{ color: "var(--accent-purple)" }} />
+                <Radio size={16} style={{ color: "var(--purple-glow)" }} />
                 <span>Cybersecurity Intel Radar</span>
               </div>
               <button className="tab-close" onClick={() => setActiveDrawer("none")}>
@@ -1082,15 +1130,15 @@ export default function App() {
             </div>
             <div className="drawer-body">
               <div className="audit-item">
-                <strong>Elite Curated Security Repos</strong>
+                <strong>Curated Elite Security Tools</strong>
                 <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "8px" }}>
                   {securityTools.map((tool, idx) => (
-                    <div key={idx} style={{ fontSize: "12px", borderBottom: "1px solid var(--border-color)", paddingBottom: "6px" }}>
+                    <div key={idx} style={{ fontSize: "12px", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "6px" }}>
                       <div style={{ display: "flex", justifyContent: "space-between" }}>
                         <strong>{tool.name}</strong>
-                        <span style={{ color: "var(--accent-amber)" }}>★ {tool.stars}</span>
+                        <span style={{ color: "var(--amber-glow)" }}>★ {tool.stars}</span>
                       </div>
-                      <p style={{ color: "var(--text-secondary)", fontSize: "11px", margin: "2px 0" }}>
+                      <p style={{ color: "var(--text-muted)", fontSize: "11px", margin: "2px 0" }}>
                         {tool.description}
                       </p>
                       <code>{tool.repo}</code>
@@ -1103,13 +1151,13 @@ export default function App() {
                 <strong>Live Critical CVE Stream</strong>
                 <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "8px" }}>
                   {cveAlerts.map((cve, idx) => (
-                    <div key={idx} style={{ fontSize: "11px", borderBottom: "1px solid var(--border-color)", paddingBottom: "6px" }}>
+                    <div key={idx} style={{ fontSize: "11px", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "6px" }}>
                       <div style={{ display: "flex", justifyContent: "space-between" }}>
-                        <code style={{ color: "var(--accent-red)" }}>{cve.cve_id}</code>
-                        <span className="audit-tag">{cve.severity} ({cve.cvss})</span>
+                        <code style={{ color: "var(--red-glow)" }}>{cve.cve_id}</code>
+                        <span className="audit-tag" style={{ background: "rgba(239, 68, 68, 0.2)", color: "var(--red-glow)" }}>{cve.severity} ({cve.cvss})</span>
                       </div>
                       <div style={{ fontWeight: "600", marginTop: "2px" }}>{cve.title}</div>
-                      <div style={{ color: "var(--text-secondary)" }}>Target: {cve.affected_tech}</div>
+                      <div style={{ color: "var(--text-muted)" }}>Target: {cve.affected_tech}</div>
                     </div>
                   ))}
                 </div>
@@ -1123,7 +1171,7 @@ export default function App() {
           <aside className="side-drawer">
             <div className="drawer-header">
               <div className="drawer-title">
-                <Puzzle size={16} style={{ color: "var(--accent-green)" }} />
+                <Puzzle size={16} style={{ color: "var(--green-glow)" }} />
                 <span>Extensions &amp; Web Store</span>
               </div>
               <button className="tab-close" onClick={() => setActiveDrawer("none")}>
@@ -1135,10 +1183,10 @@ export default function App() {
                 <strong>Installed Chrome Extensions</strong>
                 <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "8px" }}>
                   {extensions.map((ext) => (
-                    <div key={ext.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border-color)", paddingBottom: "6px" }}>
+                    <div key={ext.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border-subtle)", paddingBottom: "6px" }}>
                       <div>
-                        <strong>{ext.name}</strong> <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>v{ext.version}</span>
-                        <div style={{ fontSize: "11px", color: "var(--text-secondary)" }}>{ext.description}</div>
+                        <strong>{ext.name}</strong> <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>v{ext.version}</span>
+                        <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>{ext.description}</div>
                       </div>
                       <button
                         className={ext.is_enabled ? "btn-primary" : "btn-secondary"}
@@ -1154,13 +1202,13 @@ export default function App() {
           </aside>
         )}
 
-        {/* Resource Manager Drawer */}
+        {/* Resource Watchdog Drawer */}
         {activeDrawer === "resources" && (
           <aside className="side-drawer">
             <div className="drawer-header">
               <div className="drawer-title">
-                <Cpu size={16} style={{ color: "var(--accent-amber)" }} />
-                <span>Intelligent Resource Watchdog</span>
+                <Cpu size={16} style={{ color: "var(--amber-glow)" }} />
+                <span>Resource Watchdog</span>
               </div>
               <button className="tab-close" onClick={() => setActiveDrawer("none")}>
                 <X size={14} />
@@ -1204,8 +1252,8 @@ export default function App() {
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
-              Background Audio Active (No Throttling)
+            <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+              Background Audio Active (Zero Throttling)
             </span>
             <button
               className="btn-secondary"

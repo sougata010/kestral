@@ -17,7 +17,10 @@ use security::{
     get_adblock_stats, get_cosmetic_filters, list_vault_credentials, strip_tracking_parameters,
     AdBlockEngine, VaultManager,
 };
-use tabs::{close_tab, create_tab, get_active_tab_id, get_tabs, navigate_tab, switch_tab, TabState};
+use tabs::{
+    close_native_web_tab, close_tab, create_tab, get_active_tab_id, get_tabs,
+    hide_native_web_tabs, navigate_tab, open_native_web_tab, switch_tab, TabState,
+};
 use vpn::{get_fingerprint_protection_script, get_vpn_status, toggle_vpn_state, VpnManager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -39,6 +42,9 @@ pub fn run() {
             close_tab,
             switch_tab,
             navigate_tab,
+            open_native_web_tab,
+            hide_native_web_tabs,
+            close_native_web_tab,
             // Security
             check_cookie,
             check_url,
