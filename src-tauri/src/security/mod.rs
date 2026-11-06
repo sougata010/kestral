@@ -9,8 +9,8 @@ pub use cookie_guard::{CookieAuditResult, CookieGuard};
 pub use striping::{ParameterStriper, StripResult};
 pub use url_shield::{UrlScanResult, UrlShield};
 pub use vault::{
-    add_vault_credential, decrypt_vault_credential, list_vault_credentials, CredentialSummary,
-    VaultManager,
+    add_vault_credential, decrypt_vault_credential, list_vault_credentials, sign_and_encrypt_secret,
+    CredentialSummary, CryptoSignResult, DecryptApprovalResponse, VaultManager,
 };
 
 #[tauri::command]
@@ -26,6 +26,14 @@ pub fn check_url(url: String) -> UrlScanResult {
 #[tauri::command]
 pub fn check_adblock(url: String, state: tauri::State<'_, AdBlockEngine>) -> (bool, bool) {
     state.check_url(&url)
+}
+
+#[tauri::command]
+pub fn record_blocked_ad(count: Option<u64>, is_tracker: Option<bool>, state: tauri::State<'_, AdBlockEngine>) -> AdBlockStats {
+    let c = count.unwrap_or(1);
+    let t = is_tracker.unwrap_or(false);
+    state.record_blocked(c, t);
+    state.get_stats()
 }
 
 #[tauri::command]

@@ -128,6 +128,16 @@ impl AdBlockEngine {
         format!("{} {{ display: none !important; visibility: hidden !important; height: 0 !important; }}", selectors.join(", "))
     }
 
+    pub fn record_blocked(&self, count: u64, is_tracker: bool) {
+        let mut stats = self.stats.lock().unwrap();
+        stats.total_blocked += count;
+        if is_tracker {
+            stats.trackers_blocked += count;
+        } else {
+            stats.ads_blocked += count;
+        }
+    }
+
     pub fn get_stats(&self) -> AdBlockStats {
         self.stats.lock().unwrap().clone()
     }

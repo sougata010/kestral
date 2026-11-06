@@ -41,6 +41,31 @@ impl VpnManager {
         status.clone()
     }
 
+    pub fn switch_relay(&self, country: &str) -> VpnStatus {
+        let mut status = self.status.lock().unwrap();
+        status.exit_country = country.to_string();
+        status.latency_ms = match country {
+            "Switzerland (CH)" => 24,
+            "Iceland (IS)" => 38,
+            "Sweden (SE)" => 31,
+            "Germany (DE)" => 19,
+            _ => 28,
+        };
+        status.clone()
+    }
+
+    pub fn renew_circuit(&self) -> VpnStatus {
+        let mut status = self.status.lock().unwrap();
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let seed = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(42) % 250 + 1;
+        status.tor_circuit_hops = vec![
+            format!("185.100.84.{} (Entry Guard - Zurich)", seed),
+            format!("192.42.116.{} (Middle Relay - Amsterdam)", (seed + 17) % 254 + 1),
+            format!("194.26.29.{} (Exit Relay - {})", (seed + 43) % 254 + 1, status.exit_country),
+        ];
+        status.clone()
+    }
+
     pub fn get_status(&self) -> VpnStatus {
         self.status.lock().unwrap().clone()
     }
@@ -74,6 +99,16 @@ pub fn get_vpn_status(state: tauri::State<'_, VpnManager>) -> VpnStatus {
 #[tauri::command]
 pub fn toggle_vpn_state(state: tauri::State<'_, VpnManager>) -> VpnStatus {
     state.toggle_vpn()
+}
+
+#[tauri::command]
+pub fn switch_vpn_relay(state: tauri::State<'_, VpnManager>, country: String) -> VpnStatus {
+    state.switch_relay(&country)
+}
+
+#[tauri::command]
+pub fn renew_tor_circuit(state: tauri::State<'_, VpnManager>) -> VpnStatus {
+    state.renew_circuit()
 }
 
 #[tauri::command]
