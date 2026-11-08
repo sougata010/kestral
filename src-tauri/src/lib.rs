@@ -18,10 +18,11 @@ use security::{
     sign_and_encrypt_secret, strip_tracking_parameters, AdBlockEngine, VaultManager,
 };
 use tabs::{
-    close_native_web_tab, close_tab, create_tab, get_active_tab_id, get_tabs,
-    hide_native_web_tabs, navigate_native_web_tab_back, navigate_native_web_tab_forward,
-    navigate_tab, open_native_web_tab, reload_native_web_tab, switch_tab,
-    update_native_web_tab_bounds, update_tab_title, TabState,
+    capture_tab_screenshot, close_native_web_tab, close_tab, create_tab, get_active_tab_id,
+    get_system_clipboard, get_tabs, hide_native_web_tabs, navigate_native_web_tab_back,
+    navigate_native_web_tab_forward, navigate_tab, open_in_file_explorer, open_native_web_tab,
+    reload_native_web_tab, save_file_to_downloads, switch_native_web_tab, switch_tab,
+    toggle_native_reader_mode, update_native_web_tab_bounds, update_tab_title, TabState,
 };
 use vpn::{
     get_fingerprint_protection_script, get_vpn_status, renew_tor_circuit, switch_vpn_relay,
@@ -46,6 +47,8 @@ pub fn run() {
             create_tab,
             close_tab,
             switch_tab,
+            switch_native_web_tab,
+            get_system_clipboard,
             navigate_tab,
             open_native_web_tab,
             hide_native_web_tabs,
@@ -55,6 +58,10 @@ pub fn run() {
             reload_native_web_tab,
             navigate_native_web_tab_back,
             navigate_native_web_tab_forward,
+            toggle_native_reader_mode,
+            capture_tab_screenshot,
+            save_file_to_downloads,
+            open_in_file_explorer,
             // Security
             check_cookie,
             check_url,
