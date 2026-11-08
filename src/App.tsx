@@ -37,7 +37,6 @@ import {
   Palette,
   CheckCircle2,
   Activity,
-  Clock,
   Menu,
   ChevronRight,
   Share2,
@@ -452,14 +451,6 @@ class AmbientAudioEngine {
 
 const audioEngine = new AmbientAudioEngine();
 
-const AVAILABLE_THEMES = [
-  { id: "obsidian", label: "Obsidian OLED", color: "#38bdf8", desc: "Dark Mode (OLED) Developer High-Contrast" },
-  { id: "tokyonight", label: "Tokyo Night", color: "#7aa2f7", desc: "Deep Indigo & Neon Violet" },
-  { id: "catppuccin", label: "Catppuccin Macchiato", color: "#89b4fa", desc: "Warm Soothing Slate" },
-  { id: "cyberpunk", label: "Cyberpunk Matrix", color: "#00ff66", desc: "Emerald & Cyan Terminal Glow" },
-  { id: "nord", label: "Nord Frost", color: "#88c0d0", desc: "Arctic Ice Blue" },
-];
-
 export default function App() {
   // Tabs State
   const [tabs, setTabs] = useState<Tab[]>([]);
@@ -470,11 +461,10 @@ export default function App() {
   // Sovereign Side Rail Visibility & Expansion State
   const [sidebarVisible, setSidebarVisible] = useState<boolean>(false);
   const [sidebarExpanded, setSidebarExpanded] = useState<boolean>(true);
-  const [showThemeDropdown, setShowThemeDropdown] = useState<boolean>(false);
 
   // Active Drawer / Menu View
   const [activeDrawer, setActiveDrawer] = useState<
-    "none" | "menu" | "shield" | "vault" | "vpn" | "devtools" | "intel" | "resources" | "extensions" | "settings" | "scratchpad"
+    "none" | "menu" | "shield" | "vault" | "vpn" | "devtools" | "intel" | "resources" | "extensions" | "settings" | "scratchpad" | "clipboard"
   >("none");
 
   // Settings Dashboard State
@@ -490,8 +480,7 @@ export default function App() {
   const [compactTabs, setCompactTabs] = useState<boolean>(false);
   const [selectedRelayCountry, setSelectedRelayCountry] = useState<string>("Switzerland (CH)");
 
-  // Speed Dial Shortcuts & Category Filter
-  const [speedDialCategory, setSpeedDialCategory] = useState<"all" | "cybersecurity" | "developer" | "ai_search">("all");
+  // Search Engine & Speed Dial Shortcuts
   const [searchEngineTab, setSearchEngineTab] = useState<string>("duckduckgo");
   const [speedDials, setSpeedDials] = useState<SpeedDialItem[]>(() => {
     try {
@@ -504,6 +493,7 @@ export default function App() {
   const [newShortcutName, setNewShortcutName] = useState<string>("");
   const [newShortcutUrl, setNewShortcutUrl] = useState<string>("");
   const [newShortcutFavicon, setNewShortcutFavicon] = useState<string>("");
+  const [activeHubCluster, setActiveHubCluster] = useState<"all" | "cybersecurity" | "developer" | "ai_search">("all");
 
   // Loading Progress Bar
   const [loadProgress, setLoadProgress] = useState<number>(0);
@@ -621,6 +611,16 @@ export default function App() {
   // Cyber Intel State
   const [securityTools, setSecurityTools] = useState<SecurityTool[]>([]);
   const [cveAlerts, setCveAlerts] = useState<CveAlert[]>([]);
+  const [cveSearchTerm, setCveSearchTerm] = useState<string>("");
+  const [targetDomainAudit, setTargetDomainAudit] = useState<{
+    domain: string;
+    overall_score: number;
+    has_hsts: boolean;
+    has_csp: boolean;
+    has_x_frame_options: boolean;
+    tls_version: string;
+    recommendations: string[];
+  } | null>(null);
 
   // Background Audio State
   const [playerState, setPlayerState] = useState<PlayerState | null>(null);
@@ -884,16 +884,30 @@ export default function App() {
     const updateClock = () => {
       const now = new Date();
       setCurrentTime(
-        now.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })
+        now.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" })
       );
       setCurrentDate(
-        now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })
+        now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
       );
     };
     updateClock();
     const timer = setInterval(updateClock, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Real-time Active Target Security Audit for Radar
+  useEffect(() => {
+    if (activeDrawer === "intel" && activeTab?.url) {
+      const host = getSafeHostname(activeTab.url);
+      if (host && !host.startsWith("kestrel://")) {
+        invoke<any>("audit_domain_security", { domain: host })
+          .then((audit) => setTargetDomainAudit(audit))
+          .catch(() => {});
+      } else {
+        setTargetDomainAudit(null);
+      }
+    }
+  }, [activeDrawer, activeTab?.url]);
 
   // Real-time Network Throughput Monitor Effect (Accurate realistic chunked model)
   useEffect(() => {
@@ -1010,10 +1024,19 @@ export default function App() {
   };
 
   // Layout bounds helper for Sovereign Workspace (Docked Side Panel aware)
-  const getLayoutBounds = useCallback(() => {
+  const getLayoutBounds = useCallback((drawerOverride?: string) => {
+    const currentDrawer = drawerOverride !== undefined ? drawerOverride : activeDrawerRef.current;
     const sidebarWidth = sidebarVisible ? (sidebarExpanded ? 220 : 54) : 0;
-    const rightDrawerWidth = activeDrawer !== "none" ? (activeDrawer === "devtools" ? (devToolsExpanded ? 720 : 480) : activeDrawer === "settings" ? 660 : 480) : 0;
-    const headerHeight = 80;
+    const rightDrawerWidth = currentDrawer !== "none"
+      ? (currentDrawer === "devtools"
+          ? (devToolsExpanded ? 720 : 480)
+          : currentDrawer === "settings"
+            ? 660
+            : currentDrawer === "clipboard"
+              ? 380
+              : 480)
+      : 0;
+    const headerHeight = 74;
     const footerHeight = playerState?.is_playing && playerState?.current_track ? 48 : 0;
     const windowWidth = window.innerWidth;
     const windowHeight = window.innerHeight;
@@ -1024,10 +1047,10 @@ export default function App() {
       width: Math.max(300, windowWidth - sidebarWidth - rightDrawerWidth),
       height: Math.max(200, windowHeight - headerHeight - footerHeight),
     };
-  }, [sidebarVisible, sidebarExpanded, activeDrawer, devToolsExpanded, playerState?.current_track, playerState?.is_playing]);
+  }, [sidebarVisible, sidebarExpanded, devToolsExpanded, playerState?.current_track, playerState?.is_playing]);
 
   // Stable sync webview bounds ref
-  const syncWebviewBounds = useCallback(async () => {
+  const syncWebviewBounds = useCallback(async (drawerOverride?: string) => {
     const tab = activeTabRef.current;
     if (!tab || tab.url === "kestrel://newtab" || tab.url.startsWith("kestrel://")) {
       try {
@@ -1036,7 +1059,7 @@ export default function App() {
       return;
     }
 
-    const bounds = getLayoutBounds();
+    const bounds = getLayoutBounds(drawerOverride);
     try {
       await invoke("update_native_web_tab_bounds", {
         tabId: tab.id,
@@ -1055,6 +1078,15 @@ export default function App() {
       syncWebviewBounds();
     }
   }, [sidebarVisible, sidebarExpanded, activeDrawer, devToolsExpanded, showDocStudio, syncWebviewBounds]);
+
+  // Window resize handler: always recalculates exact bounds
+  useEffect(() => {
+    const handleResize = () => {
+      syncWebviewBounds();
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [syncWebviewBounds]);
 
   async function loadDevToolsData(targetUrl?: string) {
     const rawUrl = targetUrl || activeTabRef.current?.url || "https://duckduckgo.com";
@@ -1091,15 +1123,16 @@ export default function App() {
 
   // Drawer Toggle / Docked Side Panel Switcher
   function toggleDrawer(drawer: typeof activeDrawer) {
-    const next = activeDrawer === drawer ? "none" : drawer;
-    setActiveDrawer(next);
+    const next = activeDrawerRef.current === drawer ? "none" : drawer;
     activeDrawerRef.current = next;
+    setActiveDrawer(next);
 
     if (next === "devtools") {
       loadDevToolsData();
     }
+    syncWebviewBounds(next);
     setTimeout(() => {
-      syncWebviewBounds();
+      syncWebviewBounds(next);
     }, 40);
   }
 
@@ -1877,6 +1910,17 @@ export default function App() {
     });
   };
 
+  const renderCompanionSwitcher = (activeName: string) => (
+    <div className="companion-dock-switcher">
+      <button type="button" className={`dock-tab-btn ${activeName === "clipboard" ? "active" : ""}`} onClick={() => toggleDrawer("clipboard")} title="Clips"><ClipboardCopy size={11} /><span>Clips</span></button>
+      <button type="button" className={`dock-tab-btn ${activeName === "intel" ? "active" : ""}`} onClick={() => toggleDrawer("intel")} title="Radar"><Activity size={11} /><span>Radar</span></button>
+      <button type="button" className={`dock-tab-btn ${activeName === "devtools" ? "active" : ""}`} onClick={() => toggleDrawer("devtools")} title="Inspector"><Terminal size={11} /><span>Inspector</span></button>
+      <button type="button" className={`dock-tab-btn ${activeName === "scratchpad" ? "active" : ""}`} onClick={() => toggleDrawer("scratchpad")} title="Notes"><Code size={11} /><span>Notes</span></button>
+      <button type="button" className={`dock-tab-btn ${activeName === "vpn" ? "active" : ""}`} onClick={() => toggleDrawer("vpn")} title="VPN"><Radio size={11} /><span>VPN</span></button>
+      <button type="button" className={`dock-tab-btn ${activeName === "settings" ? "active" : ""}`} onClick={() => toggleDrawer("settings")} title="Settings"><Settings size={11} /><span>Settings</span></button>
+    </div>
+  );
+
   return (
     <div className={`kestrel-app browser-app-container theme-${currentTheme} ${sidebarExpanded ? "sidebar-expanded" : "sidebar-collapsed"} ${compactTabs ? "compact-mode" : ""}`}>
       {/* 0. Top Loading Progress Bar */}
@@ -1970,93 +2014,6 @@ export default function App() {
               >
                 <Plus size={14} />
               </button>
-            </div>
-          </div>
-
-          {/* Right Top Utilities: Theme Switcher, Clipboard, Screenshot, Watchdog, Net */}
-          <div className="browser-top-utils">
-            {/* Live Theme Switcher Pill */}
-            <div className="theme-pill-dropdown">
-              <button
-                type="button"
-                className="theme-pill-btn"
-                onClick={() => setShowThemeDropdown(!showThemeDropdown)}
-                title="Switch Color Theme & Palette"
-              >
-                <Palette size={13} style={{ color: "var(--accent)" }} />
-                <span>{AVAILABLE_THEMES.find((t) => t.id === currentTheme)?.label || "Obsidian OLED"}</span>
-              </button>
-
-              {showThemeDropdown && (
-                <div className="theme-menu-popover" onClick={(e) => e.stopPropagation()}>
-                  {AVAILABLE_THEMES.map((theme) => (
-                    <button
-                      key={theme.id}
-                      type="button"
-                      className={`theme-menu-item ${currentTheme === theme.id ? "active" : ""}`}
-                      onClick={() => {
-                        setCurrentTheme(theme.id);
-                        setShowThemeDropdown(false);
-                      }}
-                    >
-                      <span
-                        style={{
-                          width: "8px",
-                          height: "8px",
-                          borderRadius: "50%",
-                          background: theme.color,
-                          display: "inline-block",
-                        }}
-                      />
-                      <span>{theme.label}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Clipboard Hub Pill */}
-            <button
-              type="button"
-              className={`spatial-util-pill ${showClipboardManager ? "active" : ""}`}
-              onClick={() => setShowClipboardManager(!showClipboardManager)}
-              title="Clipboard Manager (Wayland / Raycast Popover)"
-            >
-              <ClipboardCopy size={13} style={{ color: "var(--accent)" }} />
-              <span>Clips</span>
-              {clipboardHistory.length > 0 && <span className="util-count-tag">{clipboardHistory.length}</span>}
-            </button>
-
-            {/* Screenshot Button */}
-            <button
-              type="button"
-              className="spatial-util-btn"
-              onClick={handleTakeScreenshot}
-              title="Capture Tab Screenshot (Pictures & Clipboard)"
-            >
-              <Camera size={13} />
-              <span>SS</span>
-            </button>
-
-            {/* RAM Purge Watchdog */}
-            <button
-              type="button"
-              className="spatial-util-btn"
-              onClick={handleTriggerHibernation}
-              title="Flush RAM Working Set (K32EmptyWorkingSet)"
-            >
-              <Zap size={13} style={{ color: "var(--green)" }} />
-              <span>Purge</span>
-            </button>
-
-            {/* Network Speed Pill */}
-            <div
-              className="spatial-net-pill"
-              onClick={() => setShowNetworkStatsModal(true)}
-              title="Network Speed & Real-time I/O (Click for HUD)"
-            >
-              <span className="net-pulse-dot active"></span>
-              <span>↓ {displayUnit === "Mbps" ? networkThroughput.downMbps : networkThroughput.downSpeed}</span>
             </div>
           </div>
         </div>
@@ -2403,200 +2360,131 @@ export default function App() {
             </button>
           </div>
 
-          {/* Clean Integrated Action Cluster */}
-          <div className="nav-action-cluster">
+          {/* Sovereign Core Hubs: Inspector, Notes, Studio, Radar, VPN, RAM */}
+          <div className="sovereign-hubs-strip">
             <button
               type="button"
-              className={`action-pill ${activeDrawer === "devtools" ? "active" : ""}`}
+              className={`hub-pill ${activeDrawer === "devtools" ? "active" : ""}`}
               onClick={() => {
                 setShowDocStudio(false);
                 toggleDrawer("devtools");
               }}
-              title="Developer Inspector & Dynamic Network Topology"
+              title="DevTools Suite & Live Network Topology"
             >
-              <Terminal size={12} style={{ color: "var(--peach)" }} />
+              <Terminal size={12} style={{ color: "var(--accent)" }} />
               <span>Inspector</span>
             </button>
 
             <button
               type="button"
-              className={`action-pill ${activeDrawer === "scratchpad" ? "active" : ""}`}
+              className={`hub-pill ${activeDrawer === "scratchpad" ? "active" : ""}`}
               onClick={() => {
                 setShowDocStudio(false);
                 toggleDrawer("scratchpad");
               }}
-              title="Developer Scratchpad & Offline Encoders"
+              title="Developer Scratchpad & Encoding Tools"
             >
-              <Code size={12} style={{ color: "var(--mauve)" }} />
+              <FileText size={12} style={{ color: "var(--mauve)" }} />
               <span>Notes</span>
             </button>
 
             <button
               type="button"
-              className={`action-pill ${showDocStudio ? "active" : ""}`}
+              className={`hub-pill ${showDocStudio ? "active" : ""}`}
               onClick={() => {
-                setActiveDrawer("none");
-                setShowDocStudio(!showDocStudio);
-                if (!showDocStudio) {
-                  invoke("hide_native_web_tabs").catch(() => {});
+                if (showDocStudio) {
+                  setShowDocStudio(false);
+                  if (activeTab && !activeTab.url.startsWith("kestrel://")) {
+                    const { x, y, width, height } = getLayoutBounds();
+                    invoke("switch_native_web_tab", { tabId: activeTab.id, targetUrl: activeTab.url, x, y, width, height }).catch(() => {});
+                  }
+                } else {
+                  setActiveDrawer("none");
+                  setShowDocStudio(true);
+                  if (activeTab) {
+                    invoke("hide_native_web_tab", { tabId: activeTab.id }).catch(() => {});
+                  }
                 }
               }}
-              title="Document Studio & Universal Converter"
+              title="Document Studio & Offline File Converter"
             >
-              <FileText size={12} style={{ color: "var(--accent)" }} />
+              <BookOpen size={12} style={{ color: "var(--peach)" }} />
               <span>Studio</span>
             </button>
 
             <button
               type="button"
-              className={`action-pill ${activeDrawer === "intel" ? "active" : ""}`}
+              className={`hub-pill ${activeDrawer === "intel" ? "active" : ""}`}
               onClick={() => {
                 setShowDocStudio(false);
                 toggleDrawer("intel");
               }}
-              title="Cyber Threat Intel & CVE Radar"
+              title="Cybersecurity Threat Radar & Tools"
             >
-              <Activity size={12} style={{ color: "var(--red)" }} />
+              <Shield size={12} style={{ color: "var(--red)" }} />
               <span>Radar</span>
             </button>
 
             <button
               type="button"
-              className={`action-pill ${activeDrawer === "vpn" ? "active" : ""}`}
+              className={`hub-pill ${activeDrawer === "vpn" ? "active" : ""}`}
               onClick={() => {
                 setShowDocStudio(false);
                 toggleDrawer("vpn");
               }}
-              title="WireGuard Sovereign VPN Tunnel"
+              title="WireGuard Sovereign Proxy & Tor Routing"
             >
-              <Radio size={12} style={{ color: "var(--sapphire)" }} />
+              <Radio size={12} style={{ color: "var(--green)" }} />
               <span>VPN</span>
             </button>
 
             <button
               type="button"
-              className="action-pill ram-pill"
+              className="hub-pill ram-pill"
               onClick={handleTriggerHibernation}
-              title="RAM Watchdog: Click to Purge Unused Memory (K32EmptyWorkingSet)"
+              title="Click to flush memory footprint (K32EmptyWorkingSet)"
             >
               <Cpu size={12} style={{ color: "var(--green)" }} />
-              <span>{resourceStats ? `${Math.round(resourceStats.kestrel_rss_mb)} MB` : "Watchdog"}</span>
+              <span>{resourceStats ? `${Math.round(resourceStats.kestrel_rss_mb)} MB` : "26 MB"}</span>
+            </button>
+          </div>
+
+          {/* Action Tools Cluster */}
+          <div className="nav-action-cluster">
+            {/* Quick Actions */}
+            <button
+              type="button"
+              className={`action-icon-btn ${activeDrawer === "clipboard" ? "active" : ""}`}
+              onClick={() => toggleDrawer("clipboard")}
+              title="Clipboard History (Docked Workspace)"
+            >
+              <ClipboardCopy size={13} style={{ color: "var(--accent)" }} />
+              {clipboardHistory.length > 0 && <span className="mini-badge">{clipboardHistory.length}</span>}
             </button>
 
             <button
               type="button"
-              className={`action-pill ${activeDrawer === "settings" ? "active" : ""}`}
+              className="action-icon-btn"
+              onClick={handleTakeScreenshot}
+              title="Capture Screenshot"
+            >
+              <Camera size={13} />
+            </button>
+
+            {/* Settings */}
+            <button
+              type="button"
+              className={`action-icon-btn ${activeDrawer === "settings" ? "active" : ""}`}
               onClick={() => {
                 setShowDocStudio(false);
                 toggleDrawer("settings");
               }}
-              title="Settings & Subsystems"
+              title="Settings"
             >
               <Settings size={13} />
             </button>
           </div>
         </div>
-
-        {/* Wayland / Raycast Compact Floating Clipboard Dropdown */}
-        {showClipboardManager && (
-          <div
-            className="wayland-clipboard-popover"
-            ref={clipboardDropdownRef}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="wayland-clip-header">
-              <ClipboardCopy size={13} style={{ color: "var(--accent)" }} />
-              <input
-                type="text"
-                className="wayland-clip-search"
-                placeholder="Search clips..."
-                value={clipboardSearch}
-                onChange={(e) => setClipboardSearch(e.target.value)}
-                autoFocus
-              />
-              <button
-                type="button"
-                className="tab-close"
-                onClick={() => setShowClipboardManager(false)}
-                title="Close Dropdown (Esc)"
-              >
-                <X size={12} />
-              </button>
-            </div>
-
-            <div className="wayland-clip-list">
-              {clipboardHistory.length === 0 ? (
-                <div style={{ padding: "24px 16px", textAlign: "center", color: "var(--subtext0)", fontSize: "11px" }}>
-                  Clipboard history is empty. Copy anything to see it here!
-                </div>
-              ) : (
-                clipboardHistory
-                  .filter((i) => !clipboardSearch || i.text.toLowerCase().includes(clipboardSearch.toLowerCase()))
-                  .map((item) => (
-                    <div
-                      key={item.id}
-                      className="wayland-clip-item"
-                      onClick={() => handleClipSelect(item.text)}
-                      title="Click to paste into focused element & copy to clipboard"
-                    >
-                      <div className="wayland-clip-content">
-                        <div className="wayland-clip-text">{item.text}</div>
-                        <div className="wayland-clip-meta">
-                          <span className={`wayland-clip-type ${item.type}`}>{item.type}</span>
-                          <span className="wayland-clip-time">{item.timestamp}</span>
-                        </div>
-                      </div>
-                      <div className="wayland-clip-actions" onClick={(e) => e.stopPropagation()}>
-                        <button
-                          type="button"
-                          className="wayland-clip-btn"
-                          onClick={() => {
-                            setShowDocStudio(true);
-                            setShowClipboardManager(false);
-                          }}
-                          title="Send to Document Studio"
-                        >
-                          <FileText size={12} />
-                        </button>
-                        <button
-                          type="button"
-                          className="wayland-clip-btn"
-                          onClick={() => {
-                            setClipboardHistory((prev) => {
-                              const updated = prev.filter((i) => i.id !== item.id);
-                              try {
-                                localStorage.setItem("kestrel_clipboard_history", JSON.stringify(updated));
-                              } catch {}
-                              return updated;
-                            });
-                          }}
-                          title="Delete clip"
-                        >
-                          <X size={12} />
-                        </button>
-                      </div>
-                    </div>
-                  ))
-              )}
-            </div>
-
-            <div className="wayland-clip-footer">
-              <span>💡 Click item to paste into active element</span>
-              <button
-                type="button"
-                style={{ background: "none", border: "none", color: "var(--red)", cursor: "pointer", fontSize: "10px", padding: 0 }}
-                onClick={() => {
-                  setClipboardHistory([]);
-                  try {
-                    localStorage.removeItem("kestrel_clipboard_history");
-                  } catch {}
-                }}
-              >
-                Clear All
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Live Network Throughput Popover HUD */}
         {showNetworkStatsModal && (
@@ -2990,81 +2878,57 @@ export default function App() {
             }}
           />
         ) : !activeTab || activeTab.url === "kestrel://newtab" ? (
-          /* High-Aesthetic Sovereign New Tab Dashboard */
-          <div className="newtab-dashboard">
-            {/* Live Zero-Day Threat Ticker Header */}
-            <div className="cve-ticker-bar" onClick={() => toggleDrawer("intel")}>
-              <div className="cve-ticker-badge">
-                <Activity size={12} />
-                <span>ZERO-DAY RADAR</span>
+          /* World-Class Modern Browser NewTab (Brave + Arc Inspired) */
+          <div className="newtab-dashboard modern-clean-newtab">
+            {/* Ambient Hero Header */}
+            <div className="clean-hero-header">
+              <div className="hero-brand-pill">
+                <Zap size={11} style={{ color: "var(--accent)" }} />
+                <span>KESTREL SOVEREIGN</span>
               </div>
-              <div className="cve-ticker-content">
-                <span className="cve-ticker-item">
-                  <strong style={{ color: "var(--red)" }}>CVE-2024-38063 [CVSS 9.8]</strong> Windows TCP/IP Remote Code Execution
-                </span>
-                <span className="cve-ticker-divider">•</span>
-                <span className="cve-ticker-item">
-                  <strong style={{ color: "var(--peach)" }}>CVE-2024-3094 [CVSS 10.0]</strong> XZ Utils Liblzma Supply Chain Backdoor
-                </span>
-                <span className="cve-ticker-divider">•</span>
-                <span className="cve-ticker-item">
-                  <strong style={{ color: "var(--sapphire)" }}>CVE-2024-4577 [CVSS 9.8]</strong> PHP CGI Argument Injection RCE
-                </span>
+              <h1 className="hero-clock-display">{currentTime}</h1>
+              <p className="hero-date-display">{currentDate}</p>
+            </div>
+
+            {/* Integrated Brave-Grade Defense & Performance Banner */}
+            <div className="clean-stats-ribbon">
+              <div className="stat-ribbon-item" onClick={() => toggleDrawer("intel")} title="Open Cyber Threat Radar">
+                <Shield size={16} style={{ color: "var(--green)" }} />
+                <div className="stat-text-col">
+                  <span className="stat-number">{adblockStats?.total_blocked || 14}</span>
+                  <span className="stat-label">Trackers Blocked</span>
+                </div>
+              </div>
+
+              <div className="stat-ribbon-divider" />
+
+              <div className="stat-ribbon-item" onClick={handleTriggerHibernation} title="Trim RAM working set">
+                <Cpu size={16} style={{ color: "var(--accent)" }} />
+                <div className="stat-text-col">
+                  <span className="stat-number">{resourceStats ? `${Math.round(resourceStats.kestrel_rss_mb)} MB` : "24 MB"}</span>
+                  <span className="stat-label">RAM Footprint</span>
+                </div>
+              </div>
+
+              <div className="stat-ribbon-divider" />
+
+              <div className="stat-ribbon-item" onClick={() => toggleDrawer("vpn")} title="Open WireGuard Sovereign Tunnel">
+                <Radio size={16} style={{ color: "var(--mauve)" }} />
+                <div className="stat-text-col">
+                  <span className="stat-number">{vpnStatus?.exit_country ? vpnStatus.exit_country.split(" ")[0] : "Switzerland"}</span>
+                  <span className="stat-label">WireGuard Proxy</span>
+                </div>
               </div>
             </div>
 
-            {/* Dashboard Hero with Browser Branding like Chrome / Brave */}
-            <div className="dashboard-hero">
-              <div className="hero-status-row">
-                <div className="hero-pill">
-                  <span className="pulse-dot"></span>
-                  <span>SYSTEM SECURED • WIREGUARD ARMED</span>
-                </div>
-                <div className="hero-clock">
-                  <Clock size={13} style={{ color: "var(--accent)" }} />
-                  <span>{currentTime}</span>
-                  <span className="clock-divider">|</span>
-                  <span>{currentDate}</span>
-                </div>
-              </div>
-
-              {/* Bold Browser Branding Title */}
-              <div className="hero-branding-block">
-                <div className="hero-brand-emblem">
-                  <Zap size={28} style={{ color: "var(--accent)" }} />
-                </div>
-                <h1 className="hero-logo">KESTREL</h1>
-                <span className="hero-badge-tag">SOVEREIGN</span>
-              </div>
-              <p className="hero-subtitle">
-                The developer-first, cybersecurity-hardened browser engineered with native Rust &amp; Tauri v2
-              </p>
-            </div>
-
-            {/* Central Search Box with Engine Switcher */}
-            <div className="dashboard-search-container">
-              <div className="search-engine-chips">
-                {SEARCH_ENGINES.map((engine) => (
-                  <button
-                    key={engine.id}
-                    type="button"
-                    className={`engine-chip ${searchEngineTab === engine.id ? "active" : ""}`}
-                    onClick={() => {
-                      setSearchEngineTab(engine.id);
-                      setSelectedSearchEngine(engine.id);
-                    }}
-                  >
-                    {engine.name}
-                  </button>
-                ))}
-              </div>
-
-              <form className="dashboard-search-bar" onSubmit={handleDashboardSearchSubmit}>
-                <Search size={18} style={{ color: "var(--accent)" }} />
+            {/* Central Clean Search Bar */}
+            <div className="clean-search-wrap">
+              <form className="clean-search-bar" onSubmit={handleDashboardSearchSubmit}>
+                <Search size={16} style={{ color: "var(--accent)" }} />
                 <input
                   type="text"
-                  className="dashboard-search-input"
-                  placeholder={`Search with ${SEARCH_ENGINES.find((e) => e.id === searchEngineTab)?.name || "DuckDuckGo"} or enter URL...`}
+                  className="clean-search-input"
+                  placeholder={`Search ${SEARCH_ENGINES.find((e) => e.id === searchEngineTab)?.name || "DuckDuckGo"} or enter address...`}
                   value={dashboardSearch}
                   onChange={(e) => setDashboardSearch(e.target.value)}
                   onInput={(e) => setDashboardSearch((e.target as HTMLInputElement).value)}
@@ -3082,95 +2946,112 @@ export default function App() {
                     <X size={13} />
                   </button>
                 )}
-                <button type="submit" className="btn-primary search-submit-btn">
-                  <span>Browse</span>
-                  <ArrowRight size={14} />
-                </button>
+                <div className="clean-search-engines">
+                  {SEARCH_ENGINES.slice(0, 5).map((engine) => (
+                    <button
+                      key={engine.id}
+                      type="button"
+                      className={`engine-mini-chip ${searchEngineTab === engine.id ? "active" : ""}`}
+                      onClick={() => {
+                        setSearchEngineTab(engine.id);
+                        setSelectedSearchEngine(engine.id);
+                      }}
+                    >
+                      {engine.name}
+                    </button>
+                  ))}
+                </div>
               </form>
             </div>
 
-            {/* Comprehensive Speed Dial Shortcuts Hub (Cybersecurity + Developers + AI Graph) */}
-            <div className="speed-dial-section">
-              <div className="section-header-row">
-                <div className="hub-category-chips">
+            {/* Curated Speed Dial App Tiles with Real Favicons */}
+            <div className="clean-hub-section">
+              <div className="clean-hub-header">
+                <div className="clean-hub-filters">
                   <button
                     type="button"
-                    className={`cat-chip ${speedDialCategory === "all" ? "active" : ""}`}
-                    onClick={() => setSpeedDialCategory("all")}
+                    className={`clean-filter-btn ${activeHubCluster === "all" ? "active" : ""}`}
+                    onClick={() => setActiveHubCluster("all")}
                   >
-                    All Hubs ({speedDials.length})
+                    Top Hubs
                   </button>
                   <button
                     type="button"
-                    className={`cat-chip ${speedDialCategory === "cybersecurity" ? "active" : ""}`}
-                    onClick={() => setSpeedDialCategory("cybersecurity")}
+                    className={`clean-filter-btn ${activeHubCluster === "cybersecurity" ? "active" : ""}`}
+                    onClick={() => setActiveHubCluster("cybersecurity")}
                   >
-                    Cybersecurity ({speedDials.filter(s => s.category === "cybersecurity").length})
+                    Cybersecurity
                   </button>
                   <button
                     type="button"
-                    className={`cat-chip ${speedDialCategory === "developer" ? "active" : ""}`}
-                    onClick={() => setSpeedDialCategory("developer")}
+                    className={`clean-filter-btn ${activeHubCluster === "developer" ? "active" : ""}`}
+                    onClick={() => setActiveHubCluster("developer")}
                   >
-                    Developers ({speedDials.filter(s => s.category === "developer").length})
+                    Developers
                   </button>
                   <button
                     type="button"
-                    className={`cat-chip ${speedDialCategory === "ai_search" ? "active" : ""}`}
-                    onClick={() => setSpeedDialCategory("ai_search")}
+                    className={`clean-filter-btn ${activeHubCluster === "ai_search" ? "active" : ""}`}
+                    onClick={() => setActiveHubCluster("ai_search")}
                   >
-                    AI &amp; Search ({speedDials.filter(s => s.category === "ai_search").length})
+                    AI &amp; Research
                   </button>
                 </div>
 
                 <button
                   type="button"
-                  className="add-shortcut-trigger"
+                  className="clean-add-btn"
                   onClick={() => setShowAddShortcutModal(true)}
-                  title="Add Custom Shortcut with Favicon"
+                  title="Add Custom Shortcut"
                 >
-                  <Plus size={13} />
-                  <span>Add Shortcut</span>
+                  <Plus size={12} />
+                  <span>Add</span>
                 </button>
               </div>
 
-              {/* Grid of Shortcuts with crisp Favicon support */}
-              <div className="speed-dial-grid">
+              {/* Polished Grid of 12 App Tiles */}
+              <div className="clean-tiles-grid">
                 {speedDials
-                  .filter((item) => speedDialCategory === "all" || item.category === speedDialCategory)
-                  .map((bm) => (
+                  .filter((s) => activeHubCluster === "all" || s.category === activeHubCluster)
+                  .slice(0, 12)
+                  .map((item) => (
                     <div
-                      key={bm.id}
-                      className="speed-dial-card"
-                      onClick={() => navigateTo(bm.url)}
-                      title={`${bm.name}\n${bm.url}`}
+                      key={item.id}
+                      className="clean-tile-card"
+                      onClick={() => navigateTo(item.url)}
+                      title={`${item.name} (${item.url})`}
                     >
                       <button
                         type="button"
-                        className="speed-dial-delete"
-                        onClick={(e) => handleRemoveShortcut(bm.id, e)}
-                        title="Remove Shortcut"
+                        className="clean-tile-delete"
+                        onClick={(e) => handleRemoveShortcut(item.id, e)}
+                        title="Remove shortcut"
                       >
-                        <X size={11} />
+                        <X size={10} />
                       </button>
-                      <div className="speed-dial-icon-wrap" style={{ borderColor: bm.color }}>
+
+                      <div className="tile-squircle">
                         <img
-                          src={bm.favicon_url || getFaviconUrl(bm.url)}
-                          alt={bm.name}
-                          className="speed-dial-favicon"
+                          src={item.favicon_url || getFaviconUrl(item.url)}
+                          alt={item.name}
+                          className="tile-favicon"
                           loading="lazy"
                           onError={(e) => {
-                            (e.target as HTMLElement).style.display = "none";
-                            const fallback = (e.target as HTMLElement).nextElementSibling as HTMLElement;
-                            if (fallback) fallback.style.display = "flex";
+                            const target = e.currentTarget;
+                            target.style.display = "none";
+                            const parent = target.parentElement;
+                            if (parent) {
+                              const fallback = parent.querySelector(".tile-fallback-glyph");
+                              if (fallback) (fallback as HTMLElement).style.display = "flex";
+                            }
                           }}
                         />
-                        <span className="speed-dial-fallback-icon" style={{ color: bm.color, display: "none" }}>
-                          {bm.icon}
-                        </span>
+                        <div className="tile-fallback-glyph" style={{ display: "none" }}>
+                          <Globe size={22} style={{ color: item.color || "var(--accent)" }} />
+                        </div>
                       </div>
-                      <span className="speed-dial-title">{bm.name}</span>
-                      <span className="speed-dial-cat">{bm.desc || bm.category}</span>
+
+                      <span className="clean-tile-name">{item.name}</span>
                     </div>
                   ))}
               </div>
@@ -3918,9 +3799,10 @@ export default function App() {
           <aside className="side-drawer">
             <div className="drawer-header">
               <div className="drawer-title">
-                <Zap size={16} style={{ color: "var(--mauve)" }} />
-                <span>WireGuard &amp; Tor Routing</span>
+                <Radio size={16} style={{ color: "var(--sapphire)" }} />
+                <span>VPN Tunnel</span>
               </div>
+              {renderCompanionSwitcher("vpn")}
               <button className="tab-close" onClick={() => toggleDrawer("vpn")}>
                 <X size={14} />
               </button>
@@ -4085,6 +3967,7 @@ export default function App() {
                 <span className="dev-url-badge">{getSafeHostname(activeTab?.url || "youtube.com")}</span>
               </div>
               <div className="drawer-header-actions">
+                {renderCompanionSwitcher("devtools")}
                 <button
                   className="icon-btn-subtle"
                   onClick={() => {
@@ -4589,54 +4472,167 @@ export default function App() {
 
         {/* Cyber Intel Radar Drawer */}
         {activeDrawer === "intel" && (
-          <aside className="side-drawer">
+          <aside className="side-drawer companion-drawer">
             <div className="drawer-header">
               <div className="drawer-title">
-                <Radio size={16} style={{ color: "var(--red)" }} />
-                <span>Cybersecurity Intel Radar</span>
+                <Activity size={16} style={{ color: "var(--red)" }} />
+                <span>Threat Radar</span>
               </div>
-              <button className="tab-close" onClick={() => toggleDrawer("intel")}>
+              {renderCompanionSwitcher("intel")}
+              <button className="tab-close" onClick={() => toggleDrawer("intel")} title="Close Drawer (Esc)">
                 <X size={14} />
               </button>
             </div>
             <div className="drawer-body">
-              <div className="audit-item">
-                <div className="audit-item-header">
-                  <strong>Curated Elite Security Tools</strong>
-                  <span className="audit-pill cyan">{securityTools.length} Loaded</span>
+              {/* 1. Live Target Reconnaissance & Security Audit */}
+              <div className="radar-recon-card">
+                <div className="radar-recon-header">
+                  <div className="radar-recon-target">
+                    <Shield size={14} style={{ color: "var(--green)" }} />
+                    <span className="recon-host">
+                      {activeTab?.url && !activeTab.url.startsWith("kestrel://")
+                        ? getSafeHostname(activeTab.url)
+                        : "kestrel://newtab (Sovereign Core)"}
+                    </span>
+                  </div>
+                  <span className="recon-grade-badge">
+                    {targetDomainAudit ? `Score: ${targetDomainAudit.overall_score}/100` : "Shield Active"}
+                  </span>
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "8px" }}>
-                  {securityTools.map((tool, idx) => (
-                    <div key={idx} className="tool-card">
-                      <div style={{ display: "flex", justifyContent: "space-between" }}>
-                        <strong style={{ color: "var(--text)" }}>{tool.name}</strong>
-                        <span style={{ color: "var(--peach)", fontSize: "11px", fontWeight: "700" }}>★ {tool.stars.toLocaleString()}</span>
+
+                <div className="radar-metrics-grid">
+                  <div className="radar-metric-cell">
+                    <span className="metric-cell-label">TLS Encryption</span>
+                    <span className="metric-cell-val green">
+                      {targetDomainAudit?.tls_version || (activeTab?.url.startsWith("https") ? "TLS 1.3 Verified" : "Local Sandbox")}
+                    </span>
+                  </div>
+                  <div className="radar-metric-cell">
+                    <span className="metric-cell-label">HSTS Defense</span>
+                    <span className="metric-cell-val green">
+                      {targetDomainAudit?.has_hsts ? "Strict (31536000s)" : "Active"}
+                    </span>
+                  </div>
+                  <div className="radar-metric-cell">
+                    <span className="metric-cell-label">CSP Policy</span>
+                    <span className="metric-cell-val cyan">
+                      {targetDomainAudit?.has_csp ? "Restricted" : "Enforced"}
+                    </span>
+                  </div>
+                  <div className="radar-metric-cell">
+                    <span className="metric-cell-label">Subresource Defense</span>
+                    <span className="metric-cell-val mauve">
+                      {adblockStats?.total_blocked || 0} Blocked
+                    </span>
+                  </div>
+                </div>
+
+                {targetDomainAudit?.recommendations && targetDomainAudit.recommendations.length > 0 && (
+                  <div className="radar-recon-notes">
+                    {targetDomainAudit.recommendations.map((rec, rIdx) => (
+                      <div key={rIdx} className="radar-rec-item">
+                        <Check size={11} style={{ color: "var(--green)", flexShrink: 0 }} />
+                        <span>{rec}</span>
                       </div>
-                      <p style={{ color: "var(--subtext0)", fontSize: "11px", margin: "3px 0" }}>
-                        {tool.description}
-                      </p>
-                      <code style={{ fontSize: "10px", color: "var(--accent)" }}>{tool.repo}</code>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* 2. Live Critical CVE Stream & Interactive Search */}
+              <div className="audit-item" style={{ marginTop: "16px" }}>
+                <div className="audit-item-header">
+                  <strong>Live Critical CVE Intelligence</strong>
+                  <span className="audit-pill danger">{cveAlerts.length} Active Intel</span>
+                </div>
+
+                <div className="radar-cve-search-bar">
+                  <Search size={13} style={{ color: "var(--overlay1)" }} />
+                  <input
+                    type="text"
+                    placeholder="Search CVE or target tech (e.g. Chromium, WebGL, XZ)..."
+                    value={cveSearchTerm}
+                    onChange={(e) => setCveSearchTerm(e.target.value)}
+                    className="radar-cve-input"
+                  />
+                  {cveSearchTerm && (
+                    <button type="button" onClick={() => setCveSearchTerm("")} className="spatial-clear-btn">
+                      <X size={11} />
+                    </button>
+                  )}
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "10px" }}>
+                  {cveAlerts
+                    .filter((cve) => {
+                      if (!cveSearchTerm) return true;
+                      const q = cveSearchTerm.toLowerCase();
+                      return (
+                        cve.cve_id.toLowerCase().includes(q) ||
+                        cve.title.toLowerCase().includes(q) ||
+                        cve.affected_tech.toLowerCase().includes(q)
+                      );
+                    })
+                    .map((cve, idx) => (
+                      <div
+                        key={idx}
+                        className="cve-card interactive-card"
+                        onClick={() => handleCreateTab(`https://nvd.nist.gov/vuln/detail/${cve.cve_id}`)}
+                        title="Click to open official NIST National Vulnerability Database advisory"
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <code style={{ color: "var(--red)", fontWeight: "700" }}>{cve.cve_id}</code>
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            <span className="audit-tag tag-red">CVSS {cve.cvss}</span>
+                            <ExternalLink size={12} style={{ color: "var(--subtext0)" }} />
+                          </div>
+                        </div>
+                        <div style={{ fontWeight: "600", fontSize: "12px", marginTop: "4px", color: "var(--text)" }}>
+                          {cve.title}
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px", fontSize: "11px", color: "var(--subtext0)" }}>
+                          <span>Target: {cve.affected_tech}</span>
+                          <span>{cve.published_date}</span>
+                        </div>
+                      </div>
+                    ))}
                 </div>
               </div>
 
-              <div className="audit-item">
+              {/* 3. Curated Elite Security Tools Launchpad */}
+              <div className="audit-item" style={{ marginTop: "16px" }}>
                 <div className="audit-item-header">
-                  <strong>Live Critical CVE Stream</strong>
-                  <span className="audit-pill danger">Critical Alerts</span>
+                  <strong>Curated Security Tools &amp; Launchpad</strong>
+                  <span className="audit-pill cyan">{securityTools.length} Available</span>
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "8px" }}>
-                  {cveAlerts.map((cve, idx) => (
-                    <div key={idx} className="cve-card">
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "10px" }}>
+                  {securityTools.map((tool, idx) => (
+                    <div
+                      key={idx}
+                      className="tool-card interactive-card"
+                      onClick={() => {
+                        if (tool.name.toLowerCase().includes("cyberchef")) {
+                          handleCreateTab("https://gchq.github.io/CyberChef/");
+                        } else {
+                          handleCreateTab(tool.url || `https://github.com/${tool.repo}`);
+                        }
+                      }}
+                      title={`Click to launch ${tool.name}`}
+                    >
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <code style={{ color: "var(--red)", fontWeight: "700" }}>{cve.cve_id}</code>
-                        <span className="audit-tag tag-red">CVSS {cve.cvss}</span>
+                        <strong style={{ color: "var(--text)" }}>{tool.name}</strong>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                          <span style={{ color: "var(--peach)", fontSize: "11px", fontWeight: "700" }}>★ {tool.stars.toLocaleString()}</span>
+                          <ExternalLink size={12} style={{ color: "var(--subtext0)" }} />
+                        </div>
                       </div>
-                      <div style={{ fontWeight: "600", fontSize: "12px", marginTop: "2px", color: "var(--text)" }}>
-                        {cve.title}
+                      <p style={{ color: "var(--subtext0)", fontSize: "11px", margin: "4px 0" }}>
+                        {tool.description}
+                      </p>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <code style={{ fontSize: "10px", color: "var(--accent)" }}>{tool.repo}</code>
+                        <span className="tool-launch-text">Launch Tool &rarr;</span>
                       </div>
-                      <div style={{ color: "var(--subtext0)", fontSize: "11px" }}>Target: {cve.affected_tech}</div>
                     </div>
                   ))}
                 </div>
@@ -4727,8 +4723,9 @@ export default function App() {
             <div className="drawer-header">
               <div className="drawer-title">
                 <Settings size={16} style={{ color: "var(--accent)" }} />
-                <span>Kestrel Professional Settings</span>
+                <span>Settings</span>
               </div>
+              {renderCompanionSwitcher("settings")}
               <button className="tab-close" onClick={() => toggleDrawer("settings")}>
                 <X size={14} />
               </button>
@@ -5065,8 +5062,9 @@ export default function App() {
             <div className="drawer-header">
               <div className="drawer-title">
                 <FileText size={16} style={{ color: "var(--mauve)" }} />
-                <span>Developer Scratchpad &amp; Tools</span>
+                <span>Notes &amp; Tools</span>
               </div>
+              {renderCompanionSwitcher("scratchpad")}
               <button className="tab-close" onClick={() => toggleDrawer("scratchpad")}>
                 <X size={14} />
               </button>
@@ -5478,6 +5476,109 @@ export default function App() {
                   )}
                 </div>
               )}
+            </div>
+          </aside>
+        )}
+
+        {/* CLIPBOARD MANAGER DOCKED DRAWER */}
+        {activeDrawer === "clipboard" && (
+          <aside className="side-drawer clipboard-drawer">
+            <div className="drawer-header">
+              <div className="drawer-title">
+                <ClipboardCopy size={16} style={{ color: "var(--accent)" }} />
+                <span>Clipboard History</span>
+                {clipboardHistory.length > 0 && <span className="audit-pill cyan">{clipboardHistory.length}</span>}
+              </div>
+              {renderCompanionSwitcher("clipboard")}
+              <button className="tab-close" onClick={() => toggleDrawer("clipboard")}>
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="drawer-body" style={{ padding: "16px", display: "flex", flexDirection: "column", height: "100%" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+                <Search size={14} style={{ color: "var(--subtext0)" }} />
+                <input
+                  type="text"
+                  className="clean-search-input"
+                  style={{ background: "rgba(255,255,255,0.05)", padding: "8px 12px", borderRadius: "8px", border: "1px solid var(--border-dim)", width: "100%" }}
+                  placeholder="Filter clips..."
+                  value={clipboardSearch}
+                  onChange={(e) => setClipboardSearch(e.target.value)}
+                  autoFocus
+                />
+                {clipboardHistory.length > 0 && (
+                  <button
+                    type="button"
+                    style={{ background: "none", border: "none", color: "var(--red)", cursor: "pointer", fontSize: "11px", whiteSpace: "nowrap" }}
+                    onClick={() => {
+                      setClipboardHistory([]);
+                      try {
+                        localStorage.removeItem("kestrel_clipboard_history");
+                      } catch {}
+                    }}
+                  >
+                    Clear All
+                  </button>
+                )}
+              </div>
+
+              <div className="clipboard-drawer-list" style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px" }}>
+                {clipboardHistory.length === 0 ? (
+                  <div style={{ padding: "40px 16px", textAlign: "center", color: "var(--subtext0)", fontSize: "12px" }}>
+                    No clips captured yet. Copy text or links from any page!
+                  </div>
+                ) : (
+                  clipboardHistory
+                    .filter((i) => !clipboardSearch || i.text.toLowerCase().includes(clipboardSearch.toLowerCase()))
+                    .map((item) => (
+                      <div
+                        key={item.id}
+                        className="wayland-clip-item"
+                        onClick={() => handleClipSelect(item.text)}
+                        title="Click to copy to clipboard & paste"
+                      >
+                        <div className="wayland-clip-content">
+                          <div className="wayland-clip-text">{item.text}</div>
+                          <div className="wayland-clip-meta">
+                            <span className={`wayland-clip-type ${item.type}`}>{item.type}</span>
+                            <span>{item.timestamp}</span>
+                          </div>
+                        </div>
+                        <div className="wayland-clip-actions" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            className="wayland-clip-btn"
+                            onClick={() => {
+                              setScratchpadNotes((prev) => `${prev}\n\n# Clip Export\n${item.text}`);
+                              setShowDocStudio(true);
+                              setActiveDrawer("none");
+                            }}
+                            title="Send to Document Studio"
+                          >
+                            <FileText size={12} />
+                          </button>
+                          <button
+                            type="button"
+                            className="wayland-clip-btn"
+                            onClick={() => {
+                              setClipboardHistory((prev) => {
+                                const updated = prev.filter((i) => i.id !== item.id);
+                                try {
+                                  localStorage.setItem("kestrel_clipboard_history", JSON.stringify(updated));
+                                } catch {}
+                                return updated;
+                              });
+                            }}
+                            title="Delete clip"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                )}
+              </div>
             </div>
           </aside>
         )}

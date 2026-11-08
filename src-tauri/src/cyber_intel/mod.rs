@@ -82,6 +82,22 @@ impl CyberIntelHub {
     pub fn get_live_cves() -> Vec<CveAlert> {
         vec![
             CveAlert {
+                cve_id: "CVE-2024-38063".to_string(),
+                title: "Windows TCP/IP Remote Code Execution Vulnerability".to_string(),
+                severity: "CRITICAL".to_string(),
+                cvss: 9.8,
+                published_date: "2024-08-13".to_string(),
+                affected_tech: "Windows TCP/IP IPv6 Stack".to_string(),
+            },
+            CveAlert {
+                cve_id: "CVE-2024-3094".to_string(),
+                title: "XZ Utils / liblzma Malicious Code Injection Backdoor".to_string(),
+                severity: "CRITICAL".to_string(),
+                cvss: 10.0,
+                published_date: "2024-03-29".to_string(),
+                affected_tech: "liblzma / OpenSSH Server".to_string(),
+            },
+            CveAlert {
                 cve_id: "CVE-2026-3019".to_string(),
                 title: "Remote Code Execution in WebGL Shader Compiler".to_string(),
                 severity: "CRITICAL".to_string(),
@@ -96,6 +112,14 @@ impl CyberIntelHub {
                 cvss: 8.4,
                 published_date: "2026-11-02".to_string(),
                 affected_tech: "Node.js / Express Auth".to_string(),
+            },
+            CveAlert {
+                cve_id: "CVE-2024-0012".to_string(),
+                title: "Management Interface Authentication Bypass Vulnerability".to_string(),
+                severity: "CRITICAL".to_string(),
+                cvss: 9.3,
+                published_date: "2024-11-18".to_string(),
+                affected_tech: "PAN-OS Web Interface".to_string(),
             },
             CveAlert {
                 cve_id: "CVE-2026-1934".to_string(),

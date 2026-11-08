@@ -372,9 +372,18 @@ pub async fn open_native_web_tab(
 
 #[tauri::command]
 pub fn update_native_web_tab_bounds(app: AppHandle, tab_id: String, x: f64, y: f64, width: f64, height: f64) -> Result<(), String> {
+    let pos = LogicalPosition::new(x, y);
+    let sz = LogicalSize::new(width.max(100.0), height.max(100.0));
     if let Some(wv) = app.get_webview(&tab_id) {
-        let _ = wv.set_position(LogicalPosition::new(x, y));
-        let _ = wv.set_size(LogicalSize::new(width.max(100.0), height.max(100.0)));
+        let _ = wv.set_position(pos);
+        let _ = wv.set_size(sz);
+    }
+    // Also broadcast to any other child webviews to guarantee zero black-screen dead zones
+    for (label, wv) in app.webviews() {
+        if label != "main" && !label.starts_with("kestrel://") {
+            let _ = wv.set_position(pos);
+            let _ = wv.set_size(sz);
+        }
     }
     Ok(())
 }
@@ -765,13 +774,16 @@ pub fn switch_native_web_tab(
     }
 
     // Show and position the active webview
+    let target_pos = LogicalPosition::new(x.unwrap_or(0.0), y.unwrap_or(74.0));
+    let target_sz = if let (Some(w), Some(h)) = (width, height) {
+        LogicalSize::new(w.max(100.0), h.max(100.0))
+    } else {
+        LogicalSize::new(1920.0, 1080.0)
+    };
+
     if let Some(wv) = app.get_webview(&tab_id) {
-        if let (Some(px), Some(py)) = (x, y) {
-            let _ = wv.set_position(LogicalPosition::new(px, py));
-        }
-        if let (Some(w), Some(h)) = (width, height) {
-            let _ = wv.set_size(LogicalSize::new(w.max(100.0), h.max(100.0)));
-        }
+        let _ = wv.set_position(target_pos);
+        let _ = wv.set_size(target_sz);
         let _ = wv.show();
     }
 
